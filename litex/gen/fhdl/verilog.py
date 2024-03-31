@@ -24,7 +24,7 @@ from migen.fhdl.structure   import *
 from migen.fhdl.structure   import _Operator, _Slice, _Assign, _Fragment
 from migen.fhdl.tools       import *
 from migen.fhdl.conv_output import ConvOutput
-from migen.fhdl.specials    import Instance, Memory
+from migen.fhdl.specials    import Instance, Memory, _MemoryLocation
 
 from litex.gen import LiteXContext
 from litex.gen.fhdl.namer     import build_signal_namespace
@@ -253,6 +253,12 @@ def _generate_slice(ns, node):
     r, s = _generate_expression(ns, node.value)
     return r + sr, s
 
+# Print Memory Location ----------------------------------------------------------------------------
+
+def _generate_memory_location(ns, node):
+    r, s = _generate_expression(ns, node.index)
+    return f"{ns.get_name(node.memory)}[{r}]", s
+
 # Print Cat ----------------------------------------------------------------------------------------
 
 def _generate_cat(ns, node):
@@ -282,6 +288,10 @@ def _generate_expression(ns, node):
     # Slice.
     elif isinstance(node, _Slice):
         return _generate_slice(ns, node)
+
+    # Memory Location.
+    elif isinstance(node, _MemoryLocation):
+        return _generate_memory_location(ns, node)
 
     # Cat.
     elif isinstance(node, Cat):
