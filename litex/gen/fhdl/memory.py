@@ -36,7 +36,7 @@ def _memory_generate_verilog(name, memory, namespace, add_data_file):
     # Set Port Mode to Read-First when several Ports with different Clocks.
     # FIXME: Verify behaviour with the different FPGA toolchains, try to avoid it.
     clocks = [port.clock for port in memory.ports]
-    if len(clocks) > 0 and clocks.count(clocks[0]) != len(clocks):
+    if clocks.count(clocks[0]) != len(clocks):
         for port in memory.ports:
             port.mode = READ_FIRST
 
