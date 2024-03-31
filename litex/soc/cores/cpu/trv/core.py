@@ -65,6 +65,7 @@ class TRV(CPU):
         self.periph_buses = [idbus]  # Peripheral buses (Connected to main SoC's bus).
         self.memory_buses = []  # Memory buses (Connected directly to LiteDRAM).
 
+        # from build/software/include/generated/csr.h
         CSR_BASE = 0x82000000
         CSR_LEDS_OUT_ADDR = CSR_BASE + 0x1000
 
@@ -72,6 +73,11 @@ class TRV(CPU):
         counter = Signal(26)
         self.comb += led.eq(counter[22])
         self.sync += counter.eq(counter + 1)
+
+        mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
+        self.specials += mem
+        pc = Signal(4)
+        self.comb += pc.eq(counter[22:26])
 
         latch = Signal()
         write = 1
@@ -83,7 +89,7 @@ class TRV(CPU):
             # Latch Address + Bytes to Words conversion.
             NextValue(idbus.adr, CSR_LEDS_OUT_ADDR),
             # Latch Wdata/WMask.
-            NextValue(idbus.dat_w, led),
+            NextValue(idbus.dat_w, mem[pc]),
             NextValue(idbus.sel, 0xF),
             # If Read or Write, jump to access.
             If(read | write, NextValue(idbus.we, write), NextState("WB-ACCESS")),
