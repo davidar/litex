@@ -157,6 +157,43 @@ class TRV(CPU):
         rs1 = Signal(32)
         rs2 = Signal(32)
 
+        aluIn1 = rs1
+        aluIn2 = Mux(isALUreg, rs2, Iimm)
+        aluOut = Signal(32)
+        shift_amount = Mux(isALUreg, rs2[:5], rs2Id)
+        aluIn1Signed = Signal((32, True))
+        aluIn2Signed = Signal((32, True))
+        self.comb += [
+            aluIn1Signed.eq(aluIn1),
+            aluIn2Signed.eq(aluIn2),
+        ]
+
+        # 3'b000: aluOut = (funct7[5] & instr[5]) ? (aluIn1-aluIn2) : (aluIn1+aluIn2);
+        # 3'b001: aluOut = aluIn1 << shamt;
+        # 3'b010: aluOut = ($signed(aluIn1) < $signed(aluIn2));
+        # 3'b011: aluOut = (aluIn1 < aluIn2);
+        # 3'b100: aluOut = (aluIn1 ^ aluIn2);
+        # 3'b101: aluOut = funct7[5]? ($signed(aluIn1) >>> shamt) : (aluIn1 >> shamt);
+        # 3'b110: aluOut = (aluIn1 | aluIn2);
+        # 3'b111: aluOut = (aluIn1 & aluIn2);
+        self.comb += Case(
+            funct3,
+            {
+                0b000: aluOut.eq(
+                    Mux(funct7[5] & instr[5], aluIn1 - aluIn2, aluIn1 + aluIn2)
+                ),
+                0b001: aluOut.eq(aluIn1 << shift_amount),
+                0b010: aluOut.eq(aluIn1Signed < aluIn2Signed),
+                0b011: aluOut.eq(aluIn1 < aluIn2),
+                0b100: aluOut.eq(aluIn1 ^ aluIn2),
+                0b101: aluOut.eq(
+                    Mux(funct7[5], aluIn1Signed >> shift_amount, aluIn1 >> shift_amount)
+                ),
+                0b110: aluOut.eq(aluIn1 | aluIn2),
+                0b111: aluOut.eq(aluIn1 & aluIn2),
+            },
+        )
+
         self.instr_fsm = FSM(reset_state="FETCH_INSTR")
         self.instr_fsm.act(
             "FETCH_INSTR",
@@ -175,17 +212,12 @@ class TRV(CPU):
         )
         self.instr_fsm.act(
             "EXECUTE",
+            rd_wrport.adr.eq(rdId),
+            rd_wrport.dat_w.eq(aluOut),
+            rd_wrport.we.eq((isALUreg | isALUimm) & rdId > 0),
             NextValue(pc, pc + 1),
             NextState("FETCH_INSTR"),
         )
-
-        write_back_data = Signal(32)
-        write_back_enable = Signal()
-        self.comb += [
-            rd_wrport.adr.eq(rdId),
-            rd_wrport.dat_w.eq(write_back_data),
-            rd_wrport.we.eq(write_back_enable & rdId > 0),
-        ]
 
         latch = Signal()
         write = 1
