@@ -95,8 +95,17 @@ class TRV(CPU):
         pc = Signal(32)
         # self.comb += pc.eq(counter[22:26])
 
-        # register_bank = Memory(32, 32)
-        # self.specials += register_bank
+        register_bank = Memory(32, 32)
+        self.specials += register_bank
+
+        rs1_rdport = register_bank.get_port(async_read=True)
+        self.specials += rs1_rdport
+
+        rs2_rdport = register_bank.get_port(async_read=True)
+        self.specials += rs2_rdport
+
+        rd_wrport = register_bank.get_port(write_capable=True)
+        self.specials += rd_wrport
 
         # reg [31:0] instr;
         # ...
@@ -158,6 +167,10 @@ class TRV(CPU):
             "FETCH_OPERANDS",
             # rs1.eq(register_bank[rs1Id]),
             # rs2.eq(register_bank[rs2Id]),
+            rs1_rdport.adr.eq(rs1Id),
+            rs2_rdport.adr.eq(rs2Id),
+            rs1.eq(rs1_rdport.dat_r),
+            rs2.eq(rs2_rdport.dat_r),
             NextState("EXECUTE"),
         )
         self.instr_fsm.act(
@@ -168,17 +181,18 @@ class TRV(CPU):
 
         write_back_data = Signal(32)
         write_back_enable = Signal()
-        # self.sync += If(write_back_enable & rdId > 0, register_bank[rdId].eq(write_back_data))
+        self.comb += [
+            rd_wrport.adr.eq(rdId),
+            rd_wrport.dat_w.eq(write_back_data),
+            rd_wrport.we.eq(write_back_enable & rdId > 0),
+        ]
 
         latch = Signal()
         write = 1
         read = 0
 
         led = Signal()
-        self.comb += [
-            mem_rdport.adr.eq(pc[20:24]),
-            led.eq(mem_rdport.dat_r)
-        ]
+        self.comb += [mem_rdport.adr.eq(pc[20:24]), led.eq(mem_rdport.dat_r)]
 
         self.fsm = fsm = FSM(reset_state="WAIT")
         fsm.act(
