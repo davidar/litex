@@ -69,15 +69,34 @@ class TRV(CPU):
         CSR_BASE = 0x82000000
         CSR_LEDS_OUT_ADDR = CSR_BASE + 0x1000
 
-        led = Signal()
-        counter = Signal(26)
-        self.comb += led.eq(counter[22])
-        self.sync += counter.eq(counter + 1)
+        # led = Signal()
+        # counter = Signal(26)
+        # self.comb += led.eq(counter[22])
+        # self.sync += counter.eq(counter + 1)
 
         mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
         self.specials += mem
-        pc = Signal(4)
-        self.comb += pc.eq(counter[22:26])
+
+        # wrport = mem.get_port(write_capable=True)
+        # self.specials += wrport
+        # self.comb += [
+        #     wrport.adr.eq(produce),
+        #     wrport.dat_w.eq(din),
+        #     wrport.we.eq(1)
+        # ]
+
+        mem_rdport = mem.get_port(async_read=True)
+        self.specials += mem_rdport
+        # self.comb += [
+        #     mem_rdport.adr.eq(consume),
+        #     dout.eq(mem_rdport.dat_r)
+        # ]
+
+        pc = Signal(32)
+        # self.comb += pc.eq(counter[22:26])
+
+        # register_bank = Memory(32, 32)
+        # self.specials += register_bank
 
         # reg [31:0] instr;
         # ...
@@ -126,9 +145,40 @@ class TRV(CPU):
         Bimm = Cat(rdId & 0b11110, funct7[:6], rdId[0], sign)
         Jimm = Cat(rs2Id & 0b11110, funct7[:6], rs2Id[0], sign)
 
+        rs1 = Signal(32)
+        rs2 = Signal(32)
+
+        self.instr_fsm = FSM(reset_state="FETCH_INSTR")
+        self.instr_fsm.act(
+            "FETCH_INSTR",
+            # instr.eq(mem[pc]),
+            NextState("FETCH_OPERANDS"),
+        )
+        self.instr_fsm.act(
+            "FETCH_OPERANDS",
+            # rs1.eq(register_bank[rs1Id]),
+            # rs2.eq(register_bank[rs2Id]),
+            NextState("EXECUTE"),
+        )
+        self.instr_fsm.act(
+            "EXECUTE",
+            NextValue(pc, pc + 1),
+            NextState("FETCH_INSTR"),
+        )
+
+        write_back_data = Signal(32)
+        write_back_enable = Signal()
+        # self.sync += If(write_back_enable & rdId > 0, register_bank[rdId].eq(write_back_data))
+
         latch = Signal()
         write = 1
         read = 0
+
+        led = Signal()
+        self.comb += [
+            mem_rdport.adr.eq(pc[20:24]),
+            led.eq(mem_rdport.dat_r)
+        ]
 
         self.fsm = fsm = FSM(reset_state="WAIT")
         fsm.act(
@@ -136,7 +186,7 @@ class TRV(CPU):
             # Latch Address + Bytes to Words conversion.
             NextValue(idbus.adr, CSR_LEDS_OUT_ADDR),
             # Latch Wdata/WMask.
-            NextValue(idbus.dat_w, mem[pc]),
+            NextValue(idbus.dat_w, led),
             NextValue(idbus.sel, 0xF),
             # If Read or Write, jump to access.
             If(read | write, NextValue(idbus.we, write), NextState("WB-ACCESS")),
