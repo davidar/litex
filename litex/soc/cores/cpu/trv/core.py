@@ -203,66 +203,6 @@ class TRV(CPU):
             Jimm.eq(Cat(rs2Id & 0b11110, funct7[:6], rs2Id[0], sign)),
         ]
 
-        # isALUreg: $display("ALUreg rd=%d rs1=%d rs2=%d funct3=%b",rdId, rs1Id, rs2Id, funct3);
-        # isALUimm: $display("ALUimm rd=%d rs1=%d imm=%0d funct3=%b",rdId, rs1Id, Iimm, funct3);
-        # isBranch: $display("BRANCH");
-        # isJAL:    $display("JAL");
-        # isJALR:   $display("JALR");
-        # isAUIPC:  $display("AUIPC");
-        # isLUI:    $display("LUI");
-        # isLoad:   $display("LOAD");
-        # isStore:  $display("STORE");
-        # isSYSTEM: $display("SYSTEM");
-
-        self.sync += [
-            If(
-                instr != 0,
-                Display("PC=%08X", pc),
-                #       "0000000_11111_00011_001_00011_0010011"
-                Display("         rs2   rs1       rd          "),
-                Display(
-                    "%b_%b_%b_%b_%b_%b", funct7, rs2Id, rs1Id, funct3, rdId, instr_type
-                ),
-            ),
-            If(
-                isALUreg,
-                Display(
-                    "ALUreg rd=%d rs1=%d rs2=%d funct3=%b", rdId, rs1Id, rs2Id, funct3
-                ),
-            ),
-            If(
-                isALUimm,
-                Display(
-                    "ALUimm rd=%d rs1=%d imm=%0d funct3=%b", rdId, rs1Id, Iimm, funct3
-                ),
-            ),
-            If(isBranch, Display("BRANCH")),
-            If(isJAL, Display("JAL")),
-            If(isJALR, Display("JALR")),
-            If(isAUIPC, Display("AUIPC")),
-            If(isLUI, Display("LUI")),
-            If(isLoad, Display("LOAD")),
-            If(isStore, Display("STORE")),
-            If(isSYSTEM, Display("SYSTEM")),
-            If(
-                (
-                    (instr != 0)
-                    & ~isALUreg
-                    & ~isALUimm
-                    & ~isBranch
-                    & ~isJAL
-                    & ~isJALR
-                    & ~isAUIPC
-                    & ~isLUI
-                    & ~isLoad
-                    & ~isStore
-                    & ~isSYSTEM
-                ),
-                Display("UNKNOWN %b", instr),
-            ),
-            If(instr != 0, Display("")),
-        ]
-
         rs1 = Signal(32)
         rs2 = Signal(32)
 
@@ -335,16 +275,78 @@ class TRV(CPU):
         self.sync += [
             If(
                 self.instr_fsm.ongoing("FETCH_INSTR"),
-                Display("FETCH PC=%08X", pc),
+                Display("FETCH PC=%d", pc),
             ),
             If(
                 self.instr_fsm.ongoing("FETCH_OPERANDS"),
-                Display("FETCH rs1=%08X rs2=%08X", rs1Id, rs2Id),
+                Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
             ),
             If(
                 self.instr_fsm.ongoing("EXECUTE"),
-                Display("EXECUTE (%b | %b | %b | %b) & (%d > 0)", isALUreg, isALUimm, isJAL, isJALR, rdId),
-                If(rd_wrport.we, Display("rd=%d %08X", rdId, rd_wrport.dat_w)),
+                #       "0000000_11111_00011_001_00011_0010011"
+                Display("         rs2   rs1       rd          "),
+                Display(
+                    "%b_%b_%b_%b_%b_%b",
+                    funct7,
+                    rs2Id,
+                    rs1Id,
+                    funct3,
+                    rdId,
+                    instr_type,
+                ),
+                If(
+                    isALUreg,
+                    Display(
+                        "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
+                        rdId,
+                        rs1Id,
+                        rs2Id,
+                        funct3,
+                    ),
+                ),
+                If(
+                    isALUimm,
+                    Display(
+                        "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
+                        rdId,
+                        rs1Id,
+                        Iimm,
+                        funct3,
+                    ),
+                ),
+                If(isBranch, Display("BRANCH")),
+                If(isJAL, Display("JAL")),
+                If(isJALR, Display("JALR")),
+                If(isAUIPC, Display("AUIPC")),
+                If(isLUI, Display("LUI")),
+                If(isLoad, Display("LOAD")),
+                If(isStore, Display("STORE")),
+                If(isSYSTEM, Display("SYSTEM")),
+                If(
+                    (
+                        ~isALUreg
+                        & ~isALUimm
+                        & ~isBranch
+                        & ~isJAL
+                        & ~isJALR
+                        & ~isAUIPC
+                        & ~isLUI
+                        & ~isLoad
+                        & ~isStore
+                        & ~isSYSTEM
+                    ),
+                    Display("UNKNOWN %b", instr),
+                ),
+                Display(
+                    "EXECUTE (%b | %b | %b | %b) & (%d > 0)",
+                    isALUreg,
+                    isALUimm,
+                    isJAL,
+                    isJALR,
+                    rdId,
+                ),
+                If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
+                Display(""),
             ),
         ]
 
