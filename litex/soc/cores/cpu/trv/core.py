@@ -12,6 +12,8 @@ from litex.gen import *
 from litex.soc.interconnect import wishbone
 from litex.soc.cores.cpu import CPU, CPU_GCC_TRIPLE_RISCV32
 
+from .riscv_assembler import RiscvAssembler
+
 # Variants -----------------------------------------------------------------------------------------
 
 CPU_VARIANTS = {
@@ -77,34 +79,24 @@ class TRV(CPU):
         mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
         self.specials += mem
 
-        # initial begin
-        #     // add x1, x0, x0
-        #     //                    rs2   rs1  add  rd  ALUREG
-        #     MEM[0] = 32'b0000000_00000_00000_000_00001_0110011;
-        #     // addi x1, x1, 1
-        #     //             imm         rs1  add  rd   ALUIMM
-        #     MEM[1] = 32'b000000000001_00001_000_00001_0010011;
-        #     ...
-        #     // lw x2,0(x1)
-        #     //             imm         rs1   w   rd   LOAD
-        #     MEM[5] = 32'b000000000000_00001_010_00010_0000011;
-        #     // sw x2,0(x1)
-        #     //             imm   rs2   rs1   w   imm  STORE
-        #     MEM[6] = 32'b000000_00001_00010_010_00000_0100011;
-        #     // ebreak
-        #     //                                        SYSTEM
-        #     MEM[7] = 32'b000000000001_00000_000_00000_1110011;
-        # end
-        instr_mem = Memory(32, 8, init=[
-            0b0000000_00000_00000_000_00001_0110011,
-            0b000000000001_00001_000_00001_0010011,
-            0b000000000010_00001_000_00010_0010011,
-            0b000000000011_00001_000_00011_0010011,
-            0b000000000000_00001_010_00010_0000011,
-            0b000000000000_00001_010_00010_0000011,
-            0b000000_00001_00010_010_00000_0100011,
-            0b000000000001_00000_000_00000_1110011,
-        ])
+        a = RiscvAssembler()
+        a.read("""begin:
+        ADD  x0, x0, x0
+        ADD  x1, x0, x0
+        ADDI x1, x1,  1
+        ADDI x1, x1,  1
+        ADDI x1, x1,  1
+        ADDI x1, x1,  1
+        ADD  x2, x1, x0
+        ADD  x3, x1, x2
+        SRLI x3, x3,  3
+        SLLI x3, x3, 31
+        SRAI x3, x3,  5
+        SRLI x1, x3, 26
+        EBREAK
+        """)
+        a.assemble()
+        instr_mem = Memory(32, 16, init=a.mem)
         self.specials += instr_mem
 
         # wrport = mem.get_port(write_capable=True)
@@ -296,7 +288,7 @@ class TRV(CPU):
         self.instr_fsm.act(
             "FETCH_INSTR",
             # instr.eq(mem[pc]),
-            instr_mem_rdport.adr.eq(pc[:3]),
+            instr_mem_rdport.adr.eq(pc[:4]),
             instr.eq(instr_mem_rdport.dat_r),
             NextState("FETCH_OPERANDS"),
         )
