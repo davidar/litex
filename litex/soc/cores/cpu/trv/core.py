@@ -82,33 +82,23 @@ class TRV(CPU):
         a = RiscvAssembler()
         a.read(
             """begin:
-            LI  a0, 0
-            LI  s1, 16
             LI  s0, 0
+            LI  s1, 16
 
             l0:
-            LB  a1, s0, 400
-            SB  a1, s0, 800
-            CALL wait
+            LB   a0, s0, 400
+            ;CALL wait
             ADDI s0, s0, 1
-            BNE s0, s1, l0
-
-            LI s0, 0
-
-            l1:
-            LB a0, s0, 800
-            CALL wait
-            ADDI s0, s0, 1
-            BNE s0, s1, l1
+            BNE  s0, s1, l0
             EBREAK
 
             wait:
-            LI t0, 1
-            SLLI t0, t0, 3
+            LI   t0, 1
+            SLLI t0, t0, 20
 
-            l2:
+            l1:
             ADDI t0, t0, -1
-            BNEZ t0, l2
+            BNEZ t0, l1
             RET
             """
         )
