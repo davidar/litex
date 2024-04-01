@@ -82,20 +82,12 @@ class TRV(CPU):
         a = RiscvAssembler()
         a.read(
             """begin:
-        ADD  x0, x0, x0
-        ADD  x1, x0, x0
-        ADDI x1, x1,  1
-        ADDI x1, x1,  1
-        ADDI x1, x1,  1
-        ADDI x1, x1,  1
-        ADD  x2, x1, x0
-        ADD  x3, x1, x2
-        SRLI x3, x3,  3
-        SLLI x3, x3, 31
-        SRAI x3, x3,  5
-        SRLI x1, x3, 26
-        EBREAK
-        """
+            ADD  x1, x0, x0
+            l0:
+            ADDI x1, x1,  1
+            JAL  x0, l0
+            EBREAK
+            """
         )
         a.assemble()
         instr_mem = Memory(32, 16, init=a.mem)
@@ -149,16 +141,29 @@ class TRV(CPU):
         instr = Signal(32)
         instr_type = Signal(7)
         self.comb += instr_type.eq(instr[:7])
-        isALUreg = instr_type == 0b0110011  # rd <- rs1 OP rs2
-        isALUimm = instr_type == 0b0010011  # rd <- rs1 OP Iimm
-        isBranch = instr_type == 0b1100011  # if(rs1 OP rs2) PC<-PC+Bimm
-        isJALR = instr_type == 0b1100111  # rd <- PC+4; PC<-rs1+Iimm
-        isJAL = instr_type == 0b1101111  # rd <- PC+4; PC<-PC+Jimm
-        isAUIPC = instr_type == 0b0010111  # rd <- PC + Uimm
-        isLUI = instr_type == 0b0110111  # rd <- Uimm
-        isLoad = instr_type == 0b0000011  # rd <- mem[rs1+Iimm]
-        isStore = instr_type == 0b0100011  # mem[rs1+Simm] <- rs2
-        isSYSTEM = instr_type == 0b1110011  # special
+
+        isALUreg = Signal()
+        isALUimm = Signal()
+        isBranch = Signal()
+        isJALR = Signal()
+        isJAL = Signal()
+        isAUIPC = Signal()
+        isLUI = Signal()
+        isLoad = Signal()
+        isStore = Signal()
+        isSYSTEM = Signal()
+        self.comb += [
+            isALUreg.eq(instr_type == 0b0110011),  # rd <- rs1 OP rs2
+            isALUimm.eq(instr_type == 0b0010011),  # rd <- rs1 OP Iimm
+            isBranch.eq(instr_type == 0b1100011),  # if(rs1 OP rs2) PC<-PC+Bimm
+            isJALR.eq(instr_type == 0b1100111),  # rd <- PC+4; PC<-rs1+Iimm
+            isJAL.eq(instr_type == 0b1101111),  # rd <- PC+4; PC<-PC+Jimm
+            isAUIPC.eq(instr_type == 0b0010111),  # rd <- PC + Uimm
+            isLUI.eq(instr_type == 0b0110111),  # rd <- Uimm
+            isLoad.eq(instr_type == 0b0000011),  # rd <- mem[rs1+Iimm]
+            isStore.eq(instr_type == 0b0100011),  # mem[rs1+Simm] <- rs2
+            isSYSTEM.eq(instr_type == 0b1110011),  # special
+        ]
 
         # wire [4:0] rs1Id = instr[19:15];
         # wire [4:0] rs2Id = instr[24:20];
@@ -212,6 +217,7 @@ class TRV(CPU):
         self.sync += [
             If(
                 instr != 0,
+                Display("PC=%08X", pc),
                 #       "0000000_11111_00011_001_00011_0010011"
                 Display("         rs2   rs1       rd          "),
                 Display(
@@ -301,8 +307,8 @@ class TRV(CPU):
         self.instr_fsm.act(
             "FETCH_INSTR",
             # instr.eq(mem[pc]),
-            instr_mem_rdport.adr.eq(pc[:4]),
-            instr.eq(instr_mem_rdport.dat_r),
+            instr_mem_rdport.adr.eq(pc[2:]),
+            NextValue(instr, instr_mem_rdport.dat_r),
             NextState("FETCH_OPERANDS"),
         )
         self.instr_fsm.act(
@@ -311,18 +317,36 @@ class TRV(CPU):
             # rs2.eq(register_bank[rs2Id]),
             rs1_rdport.adr.eq(rs1Id),
             rs2_rdport.adr.eq(rs2Id),
-            rs1.eq(rs1_rdport.dat_r),
-            rs2.eq(rs2_rdport.dat_r),
+            NextValue(rs1, rs1_rdport.dat_r),
+            NextValue(rs2, rs2_rdport.dat_r),
             NextState("EXECUTE"),
         )
         self.instr_fsm.act(
             "EXECUTE",
             rd_wrport.adr.eq(rdId),
-            rd_wrport.dat_w.eq(aluOut),
-            rd_wrport.we.eq((isALUreg | isALUimm) & rdId > 0),
-            NextValue(pc, pc + 1),
+            rd_wrport.dat_w.eq(Mux(isJAL | isJALR, pc + 4, aluOut)),
+            rd_wrport.we.eq((isALUreg | isALUimm | isJAL | isJALR) & (rdId > 0)),
+            If(isJAL, NextValue(pc, pc + Jimm))
+            .Elif(isJALR, NextValue(pc, rs1 + Iimm))
+            .Else(NextValue(pc, pc + 4)),
             NextState("FETCH_INSTR"),
         )
+
+        self.sync += [
+            If(
+                self.instr_fsm.ongoing("FETCH_INSTR"),
+                Display("FETCH PC=%08X", pc),
+            ),
+            If(
+                self.instr_fsm.ongoing("FETCH_OPERANDS"),
+                Display("FETCH rs1=%08X rs2=%08X", rs1Id, rs2Id),
+            ),
+            If(
+                self.instr_fsm.ongoing("EXECUTE"),
+                Display("EXECUTE (%b | %b | %b | %b) & (%d > 0)", isALUreg, isALUimm, isJAL, isJALR, rdId),
+                If(rd_wrport.we, Display("rd=%d %08X", rdId, rd_wrport.dat_w)),
+            ),
+        ]
 
         latch = Signal()
         write = 1
@@ -370,3 +394,5 @@ class TRV(CPU):
     def do_finalize(self):
         assert hasattr(self, "reset_address")
         # self.specials += Instance("FemtoRV32", **self.cpu_params)
+
+        # self.sync += Display("instr_fsm state=%d", self.instr_fsm.state)
