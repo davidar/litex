@@ -67,76 +67,7 @@ class TRV(CPU):
         self.periph_buses = [idbus]  # Peripheral buses (Connected to main SoC's bus).
         self.memory_buses = []  # Memory buses (Connected directly to LiteDRAM).
 
-        # from build/software/include/generated/csr.h
-        CSR_BASE = 0x82000000
-        CSR_LEDS_OUT_ADDR = CSR_BASE + 0x1000
-
-        # led = Signal()
-        # counter = Signal(26)
-        # self.comb += led.eq(counter[22])
-        # self.sync += counter.eq(counter + 1)
-
-        # mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
-        # self.specials += mem
-
-        # a = RiscvAssembler()
-        # a.read(
-        #     """begin:
-        #     LI  s0, 0
-        #     LI  s1, 16
-
-        #     l0:
-        #     LB   a0, s0, 400
-        #     ;CALL wait
-        #     ADDI s0, s0, 1
-        #     BNE  s0, s1, l0
-        #     EBREAK
-
-        #     wait:
-        #     LI   t0, 1
-        #     SLLI t0, t0, 20
-
-        #     l1:
-        #     ADDI t0, t0, -1
-        #     BNEZ t0, l1
-        #     RET
-        #     """
-        # )
-        # a.assemble()
-        # while len(a.mem) < 100:
-        #     a.mem.append(0)
-        # a.mem.append(0x04030201)
-        # a.mem.append(0x08070605)
-        # a.mem.append(0x0C0B0A09)
-        # a.mem.append(0xFF0F0E0D)
-        # while len(a.mem) < 256:
-        #     a.mem.append(0)
-        # instr_mem = Memory(32, 256, init=a.mem)
-        # self.specials += instr_mem
-
-        # wrport = mem.get_port(write_capable=True)
-        # self.specials += wrport
-        # self.comb += [
-        #     wrport.adr.eq(produce),
-        #     wrport.dat_w.eq(din),
-        #     wrport.we.eq(1)
-        # ]
-
-        # mem_rdport = mem.get_port(async_read=True)
-        # self.specials += mem_rdport
-        # self.comb += [
-        #     mem_rdport.adr.eq(consume),
-        #     dout.eq(mem_rdport.dat_r)
-        # ]
-
-        # instr_mem_rdport = instr_mem.get_port(async_read=True)
-        # self.specials += instr_mem_rdport
-
-        # instr_mem_wrport = instr_mem.get_port(write_capable=True, we_granularity=4)
-        # self.specials += instr_mem_wrport
-
-        pc = Signal(32)
-        # self.comb += pc.eq(counter[22:26])
+        self.PC = Signal(32)
 
         register_bank = Memory(32, 32)
         self.specials += register_bank
@@ -150,18 +81,6 @@ class TRV(CPU):
         rd_wrport = register_bank.get_port(write_capable=True)
         self.specials += rd_wrport
 
-        # reg [31:0] instr;
-        # ...
-        # wire isALUreg  =  (instr[6:0] == 7'b0110011); // rd <- rs1 OP rs2
-        # wire isALUimm  =  (instr[6:0] == 7'b0010011); // rd <- rs1 OP Iimm
-        # wire isBranch  =  (instr[6:0] == 7'b1100011); // if(rs1 OP rs2) PC<-PC+Bimm
-        # wire isJALR    =  (instr[6:0] == 7'b1100111); // rd <- PC+4; PC<-rs1+Iimm
-        # wire isJAL     =  (instr[6:0] == 7'b1101111); // rd <- PC+4; PC<-PC+Jimm
-        # wire isAUIPC   =  (instr[6:0] == 7'b0010111); // rd <- PC + Uimm
-        # wire isLUI     =  (instr[6:0] == 7'b0110111); // rd <- Uimm
-        # wire isLoad    =  (instr[6:0] == 7'b0000011); // rd <- mem[rs1+Iimm]
-        # wire isStore   =  (instr[6:0] == 7'b0100011); // mem[rs1+Simm] <- rs2
-        # wire isSYSTEM  =  (instr[6:0] == 7'b1110011); // special
         instr = Signal(32)
         instr_type = Signal(7)
         self.comb += instr_type.eq(instr[:7])
@@ -189,17 +108,11 @@ class TRV(CPU):
             isSYSTEM.eq(instr_type == 0b1110011),  # special
         ]
 
-        # wire [4:0] rs1Id = instr[19:15];
-        # wire [4:0] rs2Id = instr[24:20];
-        # wire [4:0] rdId  = instr[11:7];
-        # wire [2:0] funct3 = instr[14:12];
-        # wire [6:0] funct7 = instr[31:25];
         rdId = Signal(5)
+        funct3 = Signal(3)
         rs1Id = Signal(5)
         rs2Id = Signal(5)
-        funct3 = Signal(3)
         funct7 = Signal(7)
-
         self.comb += [
             rdId.eq(instr[7:12]),
             funct3.eq(instr[12:15]),
@@ -208,11 +121,6 @@ class TRV(CPU):
             funct7.eq(instr[25:]),
         ]
 
-        # wire [31:0] Uimm={    instr[31],   instr[30:12], {12{1'b0}}};
-        # wire [31:0] Iimm={{21{instr[31]}}, instr[30:20]};
-        # wire [31:0] Simm={{21{instr[31]}}, instr[30:25],instr[11:7]};
-        # wire [31:0] Bimm={{20{instr[31]}}, instr[7],instr[30:25],instr[11:8],1'b0};
-        # wire [31:0] Jimm={{12{instr[31]}}, instr[19:12],instr[20],instr[30:21],1'b0};
         sign = Replicate(instr[31], 20)
         Uimm = Signal(32)
         Iimm = Signal(32)
@@ -247,14 +155,6 @@ class TRV(CPU):
             aluIn2Signed.eq(aluIn2),
         ]
 
-        # 3'b000: aluOut = (funct7[5] & instr[5]) ? (aluIn1-aluIn2) : (aluIn1+aluIn2);
-        # 3'b001: aluOut = aluIn1 << shamt;
-        # 3'b010: aluOut = ($signed(aluIn1) < $signed(aluIn2));
-        # 3'b011: aluOut = (aluIn1 < aluIn2);
-        # 3'b100: aluOut = (aluIn1 ^ aluIn2);
-        # 3'b101: aluOut = funct7[5]? ($signed(aluIn1) >>> shamt) : (aluIn1 >> shamt);
-        # 3'b110: aluOut = (aluIn1 | aluIn2);
-        # 3'b111: aluOut = (aluIn1 & aluIn2);
         self.comb += Case(
             funct3,
             {
@@ -274,15 +174,6 @@ class TRV(CPU):
         )
 
         take_branch = Signal()
-        # case(funct3)
-        # 3'b000: takeBranch = (rs1 == rs2);
-        # 3'b001: takeBranch = (rs1 != rs2);
-        # 3'b100: takeBranch = ($signed(rs1) < $signed(rs2));
-        # 3'b101: takeBranch = ($signed(rs1) >= $signed(rs2));
-        # 3'b110: takeBranch = (rs1 < rs2);
-        # 3'b111: takeBranch = (rs1 >= rs2);
-        # default: takeBranch = 1'b0;
-        # endcase
         self.comb += Case(
             funct3,
             {
@@ -298,24 +189,6 @@ class TRV(CPU):
 
         mem_dat_r = Signal(32)
         mem_dat_w = Signal(32)
-
-        # wire [31:0] loadstore_addr = rs1 + Iimm;
-        # wire [15:0] LOAD_halfword =
-        #         loadstore_addr[1] ? mem_rdata[31:16] : mem_rdata[15:0];
-
-        # wire  [7:0] LOAD_byte =
-        #         loadstore_addr[0] ? LOAD_halfword[15:8] : LOAD_halfword[7:0];
-
-        # wire mem_byteAccess     = funct3[1:0] == 2'b00;
-        # wire mem_halfwordAccess = funct3[1:0] == 2'b01;
-
-        # wire LOAD_sign =
-        #     !funct3[2] & (mem_byteAccess ? LOAD_byte[7] : LOAD_halfword[15]);
-
-        # wire [31:0] LOAD_data =
-        #         mem_byteAccess ? {{24{LOAD_sign}},     LOAD_byte} :
-        #     mem_halfwordAccess ? {{16{LOAD_sign}}, LOAD_halfword} :
-        #                         mem_rdata ;
 
         loadstore_addr = Signal(32)
         LOAD_halfword = Signal(16)
@@ -348,11 +221,6 @@ class TRV(CPU):
             .Else(
                 LOAD_data.eq(mem_dat_r),
             ),
-            # assign mem_wdata[ 7: 0] = rs2[7:0];
-            # assign mem_wdata[15: 8] = loadstore_addr[0] ? rs2[7:0]  : rs2[15: 8];
-            # assign mem_wdata[23:16] = loadstore_addr[1] ? rs2[7:0]  : rs2[23:16];
-            # assign mem_wdata[31:24] = loadstore_addr[0] ? rs2[7:0]  :
-            #                 loadstore_addr[1] ? rs2[15:8] : rs2[31:24];
             mem_dat_w.eq(
                 Cat(
                     rs2[:8],
@@ -367,15 +235,14 @@ class TRV(CPU):
             ),
         ]
 
-        self.instr_fsm = FSM(reset_state="FETCH_INSTR")
-        self.instr_fsm.act(
+        self.fsm = FSM(reset_state="FETCH_INSTR")
+        self.fsm.act(
             "FETCH_INSTR",
-            # instr.eq(mem[pc]),
-            NextValue(idbus.adr, pc),
+            NextValue(idbus.adr, self.PC),
             NextValue(idbus.we, 0),
             NextState("WAIT_INSTR"),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "WAIT_INSTR",
             idbus.stb.eq(1),
             idbus.cyc.eq(1),
@@ -385,42 +252,39 @@ class TRV(CPU):
                 NextState("FETCH_OPERANDS"),
             ),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "FETCH_OPERANDS",
-            # rs1.eq(register_bank[rs1Id]),
-            # rs2.eq(register_bank[rs2Id]),
             rs1_rdport.adr.eq(rs1Id),
             rs2_rdport.adr.eq(rs2Id),
             NextValue(rs1, rs1_rdport.dat_r),
             NextValue(rs2, rs2_rdport.dat_r),
             NextState("EXECUTE"),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "EXECUTE",
             rd_wrport.adr.eq(rdId),
-            If(isJAL | isJALR, rd_wrport.dat_w.eq(pc + 4))
+            If(isJAL | isJALR, rd_wrport.dat_w.eq(self.PC + 4))
             .Elif(isLUI, rd_wrport.dat_w.eq(Uimm))
-            .Elif(isAUIPC, rd_wrport.dat_w.eq(pc + Uimm))
+            .Elif(isAUIPC, rd_wrport.dat_w.eq(self.PC + Uimm))
             .Else(rd_wrport.dat_w.eq(aluOut)),
             rd_wrport.we.eq((~isBranch & ~isStore & ~isLoad) & (rdId > 0)),
-            If(isJAL, NextValue(pc, pc + Jimm))
-            .Elif(isJALR, NextValue(pc, rs1 + Iimm))
-            .Elif(isBranch & take_branch, NextValue(pc, pc + Bimm))
-            .Else(NextValue(pc, pc + 4)),
-            If(isSYSTEM, NextState("SYSTEM"))
-            .Elif(isLoad, NextState("LOAD"))
+            If(isJAL, NextValue(self.PC, self.PC + Jimm))
+            .Elif(isJALR, NextValue(self.PC, rs1 + Iimm))
+            .Elif(isBranch & take_branch, NextValue(self.PC, self.PC + Bimm))
+            .Else(NextValue(self.PC, self.PC + 4)),
+            If(isLoad, NextState("LOAD"))
             .Elif(isStore, NextState("STORE"))
             .Else(
                 NextState("FETCH_INSTR"),
             ),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "LOAD",
             NextValue(idbus.adr, loadstore_addr),
             NextValue(idbus.we, 0),
             NextState("WAIT_LOAD"),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "WAIT_LOAD",
             idbus.stb.eq(1),
             idbus.cyc.eq(1),
@@ -433,19 +297,10 @@ class TRV(CPU):
                 NextState("FETCH_INSTR"),
             ),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "STORE",
             NextValue(idbus.adr, loadstore_addr),
             NextValue(idbus.dat_w, mem_dat_w),
-            # STORE_wmask =
-            # mem_byteAccess      ?
-            #         (loadstore_addr[1] ?
-            #             (loadstore_addr[0] ? 4'b1000 : 4'b0100) :
-            #             (loadstore_addr[0] ? 4'b0010 : 4'b0001)
-            #             ) :
-            # mem_halfwordAccess ?
-            #         (loadstore_addr[1] ? 4'b1100 : 4'b0011) :
-            #     4'b1111;
             NextValue(
                 idbus.sel,
                 Mux(
@@ -465,7 +320,7 @@ class TRV(CPU):
             NextValue(idbus.we, 1),
             NextState("WAIT_STORE"),
         )
-        self.instr_fsm.act(
+        self.fsm.act(
             "WAIT_STORE",
             idbus.stb.eq(1),
             idbus.cyc.eq(1),
@@ -474,25 +329,19 @@ class TRV(CPU):
                 NextState("FETCH_INSTR"),
             ),
         )
-        self.instr_fsm.act(
-            "SYSTEM",
-            NextState("SYSTEM"),
-        )
-
-        led = Signal()
 
         self.sync += [
             If(
-                self.instr_fsm.ongoing("FETCH_INSTR"),
+                self.fsm.ongoing("FETCH_INSTR"),
                 Display(""),
-                Display("FETCH PC=%d LED=%b", pc, led),
+                Display("FETCH PC=%d", self.PC),
             ),
             If(
-                self.instr_fsm.ongoing("FETCH_OPERANDS"),
+                self.fsm.ongoing("FETCH_OPERANDS"),
                 Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
             ),
             If(
-                self.instr_fsm.ongoing("EXECUTE"),
+                self.fsm.ongoing("EXECUTE"),
                 #       "0000000_11111_00011_001_00011_0010011"
                 Display("         rs2   rs1       rd          "),
                 Display(
@@ -558,68 +407,18 @@ class TRV(CPU):
                 If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
             ),
             If(
-                self.instr_fsm.ongoing("LOAD"),
+                self.fsm.ongoing("LOAD"),
                 Display("LOAD %x", loadstore_addr),
             ),
             If(
-                self.instr_fsm.ongoing("STORE"),
+                self.fsm.ongoing("STORE"),
                 Display("STORE %x <- %x", loadstore_addr, mem_dat_w),
             ),
         ]
 
-        latch = Signal()
-        write = 1
-        read = 0
-
-        # self.comb += [mem_rdport.adr.eq(pc[20:24]), led.eq(mem_rdport.dat_r)]
-
-        led_rdport = register_bank.get_port(async_read=True)
-        self.specials += led_rdport
-        self.comb += [
-            led_rdport.adr.eq(10),
-            led.eq(led_rdport.dat_r),
-        ]
-
-        '''
-        self.fsm = fsm = FSM(reset_state="WAIT")
-        fsm.act(
-            "WAIT",
-            # Latch Address + Bytes to Words conversion.
-            NextValue(idbus.adr, CSR_LEDS_OUT_ADDR),
-            # Latch Wdata/WMask.
-            NextValue(idbus.dat_w, led),
-            NextValue(idbus.sel, 0xF),
-            # If Read or Write, jump to access.
-            If(read | write, NextValue(idbus.we, write), NextState("WB-ACCESS")),
-        )
-        fsm.act(
-            "WB-ACCESS",
-            idbus.stb.eq(1),
-            idbus.cyc.eq(1),
-            # mbus.wbusy.eq(1),
-            # mbus.rbusy.eq(1),
-            If(
-                idbus.ack,
-                # mbus.wbusy.eq(0),
-                # mbus.rbusy.eq(0),
-                latch.eq(1),
-                NextState("WAIT"),
-            ),
-        )
-
-        # Latch RData on Wishbone ack.
-        mbus_rdata = Signal(32)
-        self.sync += If(latch, mbus_rdata.eq(idbus.dat_r))
-        # self.comb += mbus.rdata.eq(mbus_rdata)             # Latched value.
-        # self.comb += If(latch, mbus.rdata.eq(idbus.dat_r)) # Immediate value.
-        '''
-
     def set_reset_address(self, reset_address):
         self.reset_address = reset_address
-        # self.cpu_params.update(p_RESET_ADDR=Constant(reset_address, 32))
+        self.PC.reset = reset_address
 
     def do_finalize(self):
         assert hasattr(self, "reset_address")
-        # self.specials += Instance("FemtoRV32", **self.cpu_params)
-
-        # self.sync += Display("instr_fsm state=%d", self.instr_fsm.state)
