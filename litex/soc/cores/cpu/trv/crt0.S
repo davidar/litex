@@ -2,6 +2,28 @@
 
 	.global _start
 _start:
+
+begin:
+	LI  s0, 0
+	LI  s1, 16
+
+label0:
+	LB   a0, 400(s0)
+	# CALL wait
+	ADDI s0, s0, 1
+	BNE  s0, s1, label0
+	EBREAK
+
+wait:
+	LI   t0, 1
+	SLLI t0, t0, 20
+
+label1:
+	ADDI t0, t0, -1
+	BNEZ t0, label1
+	RET
+
+######################################################################
 	j reset_vector
 
 reset_vector:
