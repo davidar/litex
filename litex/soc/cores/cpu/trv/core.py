@@ -82,34 +82,46 @@ class TRV(CPU):
         a = RiscvAssembler()
         a.read(
             """begin:
-            LI  s0, 0
+            LI  a0, 0
             LI  s1, 16
+            LI  s0, 0
 
             l0:
-            LB   a0, s0, 400
+            LB  a1, s0, 400
+            SB  a1, s0, 800
             CALL wait
             ADDI s0, s0, 1
-            BNE  s0, s1, l0
+            BNE s0, s1, l0
+
+            LI s0, 0
+
+            l1:
+            LB a0, s0, 800
+            CALL wait
+            ADDI s0, s0, 1
+            BNE s0, s1, l1
             EBREAK
 
             wait:
-            LI   t0, 1
-            SLLI t0, t0, 20
+            LI t0, 1
+            SLLI t0, t0, 3
 
-            l1:
+            l2:
             ADDI t0, t0, -1
-            BNEZ t0, l1
+            BNEZ t0, l2
             RET
             """
         )
         a.assemble()
-        while(len(a.mem) < 100):
+        while len(a.mem) < 100:
             a.mem.append(0)
         a.mem.append(0x04030201)
         a.mem.append(0x08070605)
-        a.mem.append(0x0c0b0a09)
-        a.mem.append(0xff0f0e0d)
-        instr_mem = Memory(32, 128, init=a.mem)
+        a.mem.append(0x0C0B0A09)
+        a.mem.append(0xFF0F0E0D)
+        while len(a.mem) < 256:
+            a.mem.append(0)
+        instr_mem = Memory(32, 256, init=a.mem)
         self.specials += instr_mem
 
         # wrport = mem.get_port(write_capable=True)
@@ -129,6 +141,9 @@ class TRV(CPU):
 
         instr_mem_rdport = instr_mem.get_port(async_read=True)
         self.specials += instr_mem_rdport
+
+        instr_mem_wrport = instr_mem.get_port(write_capable=True, we_granularity=4)
+        self.specials += instr_mem_wrport
 
         pc = Signal(32)
         # self.comb += pc.eq(counter[22:26])
@@ -317,7 +332,7 @@ class TRV(CPU):
         mem_byteAccess = funct3[:2] == 0b00
         mem_halfwordAccess = funct3[:2] == 0b01
         self.comb += [
-            loadstore_addr.eq(rs1 + Iimm),
+            loadstore_addr.eq(rs1 + Mux(isLoad, Iimm, Simm)),
             LOAD_halfword.eq(
                 Mux(
                     loadstore_addr[1],
@@ -339,6 +354,23 @@ class TRV(CPU):
             )
             .Else(
                 LOAD_data.eq(instr_mem_rdport.dat_r),
+            ),
+            # assign mem_wdata[ 7: 0] = rs2[7:0];
+            # assign mem_wdata[15: 8] = loadstore_addr[0] ? rs2[7:0]  : rs2[15: 8];
+            # assign mem_wdata[23:16] = loadstore_addr[1] ? rs2[7:0]  : rs2[23:16];
+            # assign mem_wdata[31:24] = loadstore_addr[0] ? rs2[7:0]  :
+            #                 loadstore_addr[1] ? rs2[15:8] : rs2[31:24];
+            instr_mem_wrport.dat_w.eq(
+                Cat(
+                    rs2[:8],
+                    Mux(loadstore_addr[0], rs2[:8], rs2[8:16]),
+                    Mux(loadstore_addr[1], rs2[:8], rs2[16:24]),
+                    Mux(
+                        loadstore_addr[0],
+                        rs2[:8],
+                        Mux(loadstore_addr[1], rs2[8:16], rs2[24:]),
+                    ),
+                )
             ),
         ]
 
@@ -367,15 +399,15 @@ class TRV(CPU):
             .Elif(isLUI, rd_wrport.dat_w.eq(Uimm))
             .Elif(isAUIPC, rd_wrport.dat_w.eq(pc + Uimm))
             .Else(rd_wrport.dat_w.eq(aluOut)),
-            rd_wrport.we.eq(
-                (isALUreg | isALUimm | isJAL | isJALR | isLUI | isAUIPC) & (rdId > 0)
-            ),
-            If(isSYSTEM, NextState("SYSTEM"))
-            .Elif(isJAL, NextValue(pc, pc + Jimm))
+            rd_wrport.we.eq((~isBranch & ~isStore & ~isLoad) & (rdId > 0)),
+            If(isJAL, NextValue(pc, pc + Jimm))
             .Elif(isJALR, NextValue(pc, rs1 + Iimm))
             .Elif(isBranch & take_branch, NextValue(pc, pc + Bimm))
             .Else(NextValue(pc, pc + 4)),
-            If(isLoad, NextState("LOAD")).Else(
+            If(isSYSTEM, NextState("SYSTEM"))
+            .Elif(isLoad, NextState("LOAD"))
+            .Elif(isStore, NextState("STORE"))
+            .Else(
                 NextState("FETCH_INSTR"),
             ),
         )
@@ -388,84 +420,124 @@ class TRV(CPU):
             NextState("FETCH_INSTR"),
         )
         self.instr_fsm.act(
-            "SYSTEM",
+            "STORE",
+            instr_mem_wrport.adr.eq(loadstore_addr[2:]),
+            # STORE_wmask =
+            # mem_byteAccess      ?
+            #         (loadstore_addr[1] ?
+            #             (loadstore_addr[0] ? 4'b1000 : 4'b0100) :
+            #             (loadstore_addr[0] ? 4'b0010 : 4'b0001)
+            #             ) :
+            # mem_halfwordAccess ?
+            #         (loadstore_addr[1] ? 4'b1100 : 4'b0011) :
+            #     4'b1111;
+            instr_mem_wrport.we.eq(
+                Mux(
+                    mem_byteAccess,
+                    Mux(
+                        loadstore_addr[1],
+                        Mux(loadstore_addr[0], 0b1000, 0b0100),
+                        Mux(loadstore_addr[0], 0b0010, 0b0001),
+                    ),
+                    Mux(
+                        mem_halfwordAccess,
+                        Mux(loadstore_addr[1], 0b1100, 0b0011),
+                        0b1111,
+                    ),
+                ),
+            ),
+            NextState("FETCH_INSTR"),
         )
+        self.instr_fsm.act(
+            "SYSTEM",
+            NextState("SYSTEM"),
+        )
+
+        led = Signal()
 
         self.sync += [
             If(
                 self.instr_fsm.ongoing("FETCH_INSTR"),
-                Display("FETCH PC=%d", pc),
-            ),
-            If(
-                self.instr_fsm.ongoing("FETCH_OPERANDS"),
-                Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
-            ),
-            If(
-                self.instr_fsm.ongoing("EXECUTE"),
-                #       "0000000_11111_00011_001_00011_0010011"
-                Display("         rs2   rs1       rd          "),
-                Display(
-                    "%b_%b_%b_%b_%b_%b",
-                    funct7,
-                    rs2Id,
-                    rs1Id,
-                    funct3,
-                    rdId,
-                    instr_type,
-                ),
-                If(
-                    isALUreg,
-                    Display(
-                        "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
-                        rdId,
-                        rs1Id,
-                        rs2Id,
-                        funct3,
-                    ),
-                ),
-                If(
-                    isALUimm,
-                    Display(
-                        "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
-                        rdId,
-                        rs1Id,
-                        Iimm,
-                        funct3,
-                    ),
-                ),
-                If(isBranch, Display("BRANCH")),
-                If(isJAL, Display("JAL")),
-                If(isJALR, Display("JALR")),
-                If(isAUIPC, Display("AUIPC")),
-                If(isLUI, Display("LUI")),
-                If(isLoad, Display("LOAD")),
-                If(isStore, Display("STORE")),
-                If(isSYSTEM, Display("SYSTEM")),
-                If(
-                    (
-                        ~isALUreg
-                        & ~isALUimm
-                        & ~isBranch
-                        & ~isJAL
-                        & ~isJALR
-                        & ~isAUIPC
-                        & ~isLUI
-                        & ~isLoad
-                        & ~isStore
-                        & ~isSYSTEM
-                    ),
-                    Display("UNKNOWN %b", instr),
-                ),
-                Display(
-                    "EXECUTE (%b | %b | %b | %b) & (%d > 0)",
-                    isALUreg,
-                    isALUimm,
-                    isJAL,
-                    isJALR,
-                    rdId,
-                ),
-                If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
                 Display(""),
+                Display("FETCH PC=%d LED=%b", pc, led),
+            ),
+            # If(
+            #     self.instr_fsm.ongoing("FETCH_OPERANDS"),
+            #     Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
+            # ),
+            # If(
+            #     self.instr_fsm.ongoing("EXECUTE"),
+            #     #       "0000000_11111_00011_001_00011_0010011"
+            #     Display("         rs2   rs1       rd          "),
+            #     Display(
+            #         "%b_%b_%b_%b_%b_%b",
+            #         funct7,
+            #         rs2Id,
+            #         rs1Id,
+            #         funct3,
+            #         rdId,
+            #         instr_type,
+            #     ),
+            #     If(
+            #         isALUreg,
+            #         Display(
+            #             "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
+            #             rdId,
+            #             rs1Id,
+            #             rs2Id,
+            #             funct3,
+            #         ),
+            #     ),
+            #     If(
+            #         isALUimm,
+            #         Display(
+            #             "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
+            #             rdId,
+            #             rs1Id,
+            #             Iimm,
+            #             funct3,
+            #         ),
+            #     ),
+            #     If(isBranch, Display("BRANCH")),
+            #     If(isJAL, Display("JAL")),
+            #     If(isJALR, Display("JALR")),
+            #     If(isAUIPC, Display("AUIPC")),
+            #     If(isLUI, Display("LUI")),
+            #     If(isLoad, Display("LOAD")),
+            #     If(isStore, Display("STORE")),
+            #     If(isSYSTEM, Display("SYSTEM")),
+            #     If(
+            #         (
+            #             ~isALUreg
+            #             & ~isALUimm
+            #             & ~isBranch
+            #             & ~isJAL
+            #             & ~isJALR
+            #             & ~isAUIPC
+            #             & ~isLUI
+            #             & ~isLoad
+            #             & ~isStore
+            #             & ~isSYSTEM
+            #         ),
+            #         Display("UNKNOWN %b", instr),
+            #     ),
+            #     Display(
+            #         "EXECUTE (%b | %b | %b | %b) & (%d > 0)",
+            #         isALUreg,
+            #         isALUimm,
+            #         isJAL,
+            #         isJALR,
+            #         rdId,
+            #     ),
+            #     If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
+            # ),
+            If(
+                self.instr_fsm.ongoing("LOAD"),
+                Display("LOAD %d", loadstore_addr),
+            ),
+            If(
+                self.instr_fsm.ongoing("STORE"),
+                Display("STORE %d <- %x", loadstore_addr, instr_mem_wrport.dat_w),
             ),
         ]
 
@@ -473,7 +545,6 @@ class TRV(CPU):
         write = 1
         read = 0
 
-        led = Signal()
         # self.comb += [mem_rdport.adr.eq(pc[20:24]), led.eq(mem_rdport.dat_r)]
 
         led_rdport = register_bank.get_port(async_read=True)
