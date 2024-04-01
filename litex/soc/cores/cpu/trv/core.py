@@ -82,26 +82,34 @@ class TRV(CPU):
         a = RiscvAssembler()
         a.read(
             """begin:
-            LI  a0, 0
+            LI  s0, 0
+            LI  s1, 16
 
             l0:
-            ADDI a0, a0, 1
+            LB   a0, s0, 400
             CALL wait
-            J    l0
+            ADDI s0, s0, 1
+            BNE  s0, s1, l0
             EBREAK
 
             wait:
-            LI   a1, 1
-            SLLI a1, a1, 20
+            LI   t0, 1
+            SLLI t0, t0, 20
 
             l1:
-            ADDI a1, a1, -1
-            BNEZ a1, l1
+            ADDI t0, t0, -1
+            BNEZ t0, l1
             RET
             """
         )
         a.assemble()
-        instr_mem = Memory(32, 16, init=a.mem)
+        while(len(a.mem) < 100):
+            a.mem.append(0)
+        a.mem.append(0x04030201)
+        a.mem.append(0x08070605)
+        a.mem.append(0x0c0b0a09)
+        a.mem.append(0xff0f0e0d)
+        instr_mem = Memory(32, 128, init=a.mem)
         self.specials += instr_mem
 
         # wrport = mem.get_port(write_capable=True)
@@ -283,6 +291,57 @@ class TRV(CPU):
             },
         )
 
+        # wire [31:0] loadstore_addr = rs1 + Iimm;
+        # wire [15:0] LOAD_halfword =
+        #         loadstore_addr[1] ? mem_rdata[31:16] : mem_rdata[15:0];
+
+        # wire  [7:0] LOAD_byte =
+        #         loadstore_addr[0] ? LOAD_halfword[15:8] : LOAD_halfword[7:0];
+
+        # wire mem_byteAccess     = funct3[1:0] == 2'b00;
+        # wire mem_halfwordAccess = funct3[1:0] == 2'b01;
+
+        # wire LOAD_sign =
+        #     !funct3[2] & (mem_byteAccess ? LOAD_byte[7] : LOAD_halfword[15]);
+
+        # wire [31:0] LOAD_data =
+        #         mem_byteAccess ? {{24{LOAD_sign}},     LOAD_byte} :
+        #     mem_halfwordAccess ? {{16{LOAD_sign}}, LOAD_halfword} :
+        #                         mem_rdata ;
+
+        loadstore_addr = Signal(32)
+        LOAD_halfword = Signal(16)
+        LOAD_byte = Signal(8)
+        LOAD_sign = Signal()
+        LOAD_data = Signal(32)
+        mem_byteAccess = funct3[:2] == 0b00
+        mem_halfwordAccess = funct3[:2] == 0b01
+        self.comb += [
+            loadstore_addr.eq(rs1 + Iimm),
+            LOAD_halfword.eq(
+                Mux(
+                    loadstore_addr[1],
+                    instr_mem_rdport.dat_r[16:],
+                    instr_mem_rdport.dat_r[:16],
+                )
+            ),
+            LOAD_byte.eq(Mux(loadstore_addr[0], LOAD_halfword[8:], LOAD_halfword[:8])),
+            LOAD_sign.eq(
+                ~funct3[2] & Mux(mem_byteAccess, LOAD_byte[7], LOAD_halfword[15])
+            ),
+            If(
+                mem_byteAccess,
+                LOAD_data.eq(Cat(LOAD_byte, Replicate(LOAD_sign, 24))),
+            )
+            .Elif(
+                mem_halfwordAccess,
+                LOAD_data.eq(Cat(LOAD_halfword, Replicate(LOAD_sign, 16))),
+            )
+            .Else(
+                LOAD_data.eq(instr_mem_rdport.dat_r),
+            ),
+        ]
+
         self.instr_fsm = FSM(reset_state="FETCH_INSTR")
         self.instr_fsm.act(
             "FETCH_INSTR",
@@ -308,12 +367,28 @@ class TRV(CPU):
             .Elif(isLUI, rd_wrport.dat_w.eq(Uimm))
             .Elif(isAUIPC, rd_wrport.dat_w.eq(pc + Uimm))
             .Else(rd_wrport.dat_w.eq(aluOut)),
-            rd_wrport.we.eq((isALUreg | isALUimm | isJAL | isJALR | isLUI | isAUIPC) & (rdId > 0)),
-            If(isJAL, NextValue(pc, pc + Jimm))
+            rd_wrport.we.eq(
+                (isALUreg | isALUimm | isJAL | isJALR | isLUI | isAUIPC) & (rdId > 0)
+            ),
+            If(isSYSTEM, NextState("SYSTEM"))
+            .Elif(isJAL, NextValue(pc, pc + Jimm))
             .Elif(isJALR, NextValue(pc, rs1 + Iimm))
             .Elif(isBranch & take_branch, NextValue(pc, pc + Bimm))
             .Else(NextValue(pc, pc + 4)),
+            If(isLoad, NextState("LOAD")).Else(
+                NextState("FETCH_INSTR"),
+            ),
+        )
+        self.instr_fsm.act(
+            "LOAD",
+            instr_mem_rdport.adr.eq(loadstore_addr[2:]),
+            rd_wrport.adr.eq(rdId),
+            rd_wrport.dat_w.eq(LOAD_data),
+            rd_wrport.we.eq(rdId > 0),
             NextState("FETCH_INSTR"),
+        )
+        self.instr_fsm.act(
+            "SYSTEM",
         )
 
         self.sync += [
