@@ -80,7 +80,8 @@ class TRV(CPU):
         self.specials += mem
 
         a = RiscvAssembler()
-        a.read("""begin:
+        a.read(
+            """begin:
         ADD  x0, x0, x0
         ADD  x1, x0, x0
         ADDI x1, x1,  1
@@ -94,7 +95,8 @@ class TRV(CPU):
         SRAI x3, x3,  5
         SRLI x1, x3, 26
         EBREAK
-        """)
+        """
+        )
         a.assemble()
         instr_mem = Memory(32, 16, init=a.mem)
         self.specials += instr_mem
@@ -145,16 +147,18 @@ class TRV(CPU):
         # wire isStore   =  (instr[6:0] == 7'b0100011); // mem[rs1+Simm] <- rs2
         # wire isSYSTEM  =  (instr[6:0] == 7'b1110011); // special
         instr = Signal(32)
-        isALUreg = instr[:7] == 0b0110011  # rd <- rs1 OP rs2
-        isALUimm = instr[:7] == 0b0010011  # rd <- rs1 OP Iimm
-        isBranch = instr[:7] == 0b1100011  # if(rs1 OP rs2) PC<-PC+Bimm
-        isJALR = instr[:7] == 0b1100111  # rd <- PC+4; PC<-rs1+Iimm
-        isJAL = instr[:7] == 0b1101111  # rd <- PC+4; PC<-PC+Jimm
-        isAUIPC = instr[:7] == 0b0010111  # rd <- PC + Uimm
-        isLUI = instr[:7] == 0b0110111  # rd <- Uimm
-        isLoad = instr[:7] == 0b0000011  # rd <- mem[rs1+Iimm]
-        isStore = instr[:7] == 0b0100011  # mem[rs1+Simm] <- rs2
-        isSYSTEM = instr[:7] == 0b1110011  # special
+        instr_type = Signal(7)
+        self.comb += instr_type.eq(instr[:7])
+        isALUreg = instr_type == 0b0110011  # rd <- rs1 OP rs2
+        isALUimm = instr_type == 0b0010011  # rd <- rs1 OP Iimm
+        isBranch = instr_type == 0b1100011  # if(rs1 OP rs2) PC<-PC+Bimm
+        isJALR = instr_type == 0b1100111  # rd <- PC+4; PC<-rs1+Iimm
+        isJAL = instr_type == 0b1101111  # rd <- PC+4; PC<-PC+Jimm
+        isAUIPC = instr_type == 0b0010111  # rd <- PC + Uimm
+        isLUI = instr_type == 0b0110111  # rd <- Uimm
+        isLoad = instr_type == 0b0000011  # rd <- mem[rs1+Iimm]
+        isStore = instr_type == 0b0100011  # mem[rs1+Simm] <- rs2
+        isSYSTEM = instr_type == 0b1110011  # special
 
         # wire [4:0] rs1Id = instr[19:15];
         # wire [4:0] rs2Id = instr[24:20];
@@ -207,6 +211,14 @@ class TRV(CPU):
 
         self.sync += [
             If(
+                instr != 0,
+                #       "0000000_11111_00011_001_00011_0010011"
+                Display("         rs2   rs1       rd          "),
+                Display(
+                    "%b_%b_%b_%b_%b_%b", funct7, rs2Id, rs1Id, funct3, rdId, instr_type
+                ),
+            ),
+            If(
                 isALUreg,
                 Display(
                     "ALUreg rd=%d rs1=%d rs2=%d funct3=%b", rdId, rs1Id, rs2Id, funct3
@@ -242,6 +254,7 @@ class TRV(CPU):
                 ),
                 Display("UNKNOWN %b", instr),
             ),
+            If(instr != 0, Display("")),
         ]
 
         rs1 = Signal(32)
