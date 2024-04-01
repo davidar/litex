@@ -83,9 +83,10 @@ class TRV(CPU):
         a.read(
             """begin:
             ADD  x1, x0, x0
+            ADDI x2, x0, 32
             l0:
             ADDI x1, x1,  1
-            JAL  x0, l0
+            BNE  x1, x2, l0
             EBREAK
             """
         )
@@ -205,6 +206,12 @@ class TRV(CPU):
 
         rs1 = Signal(32)
         rs2 = Signal(32)
+        rs1Signed = Signal((32, True))
+        rs2Signed = Signal((32, True))
+        self.comb += [
+            rs1Signed.eq(rs1),
+            rs2Signed.eq(rs2),
+        ]
 
         aluIn1 = rs1
         aluIn2 = Mux(isALUreg, rs2, Iimm)
@@ -243,6 +250,29 @@ class TRV(CPU):
             },
         )
 
+        take_branch = Signal()
+        # case(funct3)
+        # 3'b000: takeBranch = (rs1 == rs2);
+        # 3'b001: takeBranch = (rs1 != rs2);
+        # 3'b100: takeBranch = ($signed(rs1) < $signed(rs2));
+        # 3'b101: takeBranch = ($signed(rs1) >= $signed(rs2));
+        # 3'b110: takeBranch = (rs1 < rs2);
+        # 3'b111: takeBranch = (rs1 >= rs2);
+        # default: takeBranch = 1'b0;
+        # endcase
+        self.comb += Case(
+            funct3,
+            {
+                0b000: take_branch.eq(rs1 == rs2),
+                0b001: take_branch.eq(rs1 != rs2),
+                0b100: take_branch.eq(rs1Signed < rs2Signed),
+                0b101: take_branch.eq(rs1Signed >= rs2Signed),
+                0b110: take_branch.eq(rs1 < rs2),
+                0b111: take_branch.eq(rs1 >= rs2),
+                "default": take_branch.eq(0),
+            },
+        )
+
         self.instr_fsm = FSM(reset_state="FETCH_INSTR")
         self.instr_fsm.act(
             "FETCH_INSTR",
@@ -268,6 +298,7 @@ class TRV(CPU):
             rd_wrport.we.eq((isALUreg | isALUimm | isJAL | isJALR) & (rdId > 0)),
             If(isJAL, NextValue(pc, pc + Jimm))
             .Elif(isJALR, NextValue(pc, rs1 + Iimm))
+            .Elif(isBranch & take_branch, NextValue(pc, pc + Bimm))
             .Else(NextValue(pc, pc + 4)),
             NextState("FETCH_INSTR"),
         )
