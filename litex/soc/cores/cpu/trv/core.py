@@ -12,7 +12,7 @@ from litex.gen import *
 from litex.soc.interconnect import wishbone
 from litex.soc.cores.cpu import CPU, CPU_GCC_TRIPLE_RISCV32
 
-from .riscv_assembler import RiscvAssembler
+# from .riscv_assembler import RiscvAssembler
 
 # Variants -----------------------------------------------------------------------------------------
 
@@ -79,40 +79,40 @@ class TRV(CPU):
         # mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
         # self.specials += mem
 
-        a = RiscvAssembler()
-        a.read(
-            """begin:
-            LI  s0, 0
-            LI  s1, 16
+        # a = RiscvAssembler()
+        # a.read(
+        #     """begin:
+        #     LI  s0, 0
+        #     LI  s1, 16
 
-            l0:
-            LB   a0, s0, 400
-            ;CALL wait
-            ADDI s0, s0, 1
-            BNE  s0, s1, l0
-            EBREAK
+        #     l0:
+        #     LB   a0, s0, 400
+        #     ;CALL wait
+        #     ADDI s0, s0, 1
+        #     BNE  s0, s1, l0
+        #     EBREAK
 
-            wait:
-            LI   t0, 1
-            SLLI t0, t0, 20
+        #     wait:
+        #     LI   t0, 1
+        #     SLLI t0, t0, 20
 
-            l1:
-            ADDI t0, t0, -1
-            BNEZ t0, l1
-            RET
-            """
-        )
-        a.assemble()
-        while len(a.mem) < 100:
-            a.mem.append(0)
-        a.mem.append(0x04030201)
-        a.mem.append(0x08070605)
-        a.mem.append(0x0C0B0A09)
-        a.mem.append(0xFF0F0E0D)
-        while len(a.mem) < 256:
-            a.mem.append(0)
-        instr_mem = Memory(32, 256, init=a.mem)
-        self.specials += instr_mem
+        #     l1:
+        #     ADDI t0, t0, -1
+        #     BNEZ t0, l1
+        #     RET
+        #     """
+        # )
+        # a.assemble()
+        # while len(a.mem) < 100:
+        #     a.mem.append(0)
+        # a.mem.append(0x04030201)
+        # a.mem.append(0x08070605)
+        # a.mem.append(0x0C0B0A09)
+        # a.mem.append(0xFF0F0E0D)
+        # while len(a.mem) < 256:
+        #     a.mem.append(0)
+        # instr_mem = Memory(32, 256, init=a.mem)
+        # self.specials += instr_mem
 
         # wrport = mem.get_port(write_capable=True)
         # self.specials += wrport
@@ -129,11 +129,11 @@ class TRV(CPU):
         #     dout.eq(mem_rdport.dat_r)
         # ]
 
-        instr_mem_rdport = instr_mem.get_port(async_read=True)
-        self.specials += instr_mem_rdport
+        # instr_mem_rdport = instr_mem.get_port(async_read=True)
+        # self.specials += instr_mem_rdport
 
-        instr_mem_wrport = instr_mem.get_port(write_capable=True, we_granularity=4)
-        self.specials += instr_mem_wrport
+        # instr_mem_wrport = instr_mem.get_port(write_capable=True, we_granularity=4)
+        # self.specials += instr_mem_wrport
 
         pc = Signal(32)
         # self.comb += pc.eq(counter[22:26])
@@ -296,6 +296,9 @@ class TRV(CPU):
             },
         )
 
+        mem_dat_r = Signal(32)
+        mem_dat_w = Signal(32)
+
         # wire [31:0] loadstore_addr = rs1 + Iimm;
         # wire [15:0] LOAD_halfword =
         #         loadstore_addr[1] ? mem_rdata[31:16] : mem_rdata[15:0];
@@ -326,8 +329,8 @@ class TRV(CPU):
             LOAD_halfword.eq(
                 Mux(
                     loadstore_addr[1],
-                    instr_mem_rdport.dat_r[16:],
-                    instr_mem_rdport.dat_r[:16],
+                    mem_dat_r[16:],
+                    mem_dat_r[:16],
                 )
             ),
             LOAD_byte.eq(Mux(loadstore_addr[0], LOAD_halfword[8:], LOAD_halfword[:8])),
@@ -343,14 +346,14 @@ class TRV(CPU):
                 LOAD_data.eq(Cat(LOAD_halfword, Replicate(LOAD_sign, 16))),
             )
             .Else(
-                LOAD_data.eq(instr_mem_rdport.dat_r),
+                LOAD_data.eq(mem_dat_r),
             ),
             # assign mem_wdata[ 7: 0] = rs2[7:0];
             # assign mem_wdata[15: 8] = loadstore_addr[0] ? rs2[7:0]  : rs2[15: 8];
             # assign mem_wdata[23:16] = loadstore_addr[1] ? rs2[7:0]  : rs2[23:16];
             # assign mem_wdata[31:24] = loadstore_addr[0] ? rs2[7:0]  :
             #                 loadstore_addr[1] ? rs2[15:8] : rs2[31:24];
-            instr_mem_wrport.dat_w.eq(
+            mem_dat_w.eq(
                 Cat(
                     rs2[:8],
                     Mux(loadstore_addr[0], rs2[:8], rs2[8:16]),
@@ -368,9 +371,19 @@ class TRV(CPU):
         self.instr_fsm.act(
             "FETCH_INSTR",
             # instr.eq(mem[pc]),
-            instr_mem_rdport.adr.eq(pc[2:]),
-            NextValue(instr, instr_mem_rdport.dat_r),
-            NextState("FETCH_OPERANDS"),
+            NextValue(idbus.adr, pc),
+            NextValue(idbus.we, 0),
+            NextState("WAIT_INSTR"),
+        )
+        self.instr_fsm.act(
+            "WAIT_INSTR",
+            idbus.stb.eq(1),
+            idbus.cyc.eq(1),
+            If(
+                idbus.ack,
+                NextValue(instr, idbus.dat_r),
+                NextState("FETCH_OPERANDS"),
+            ),
         )
         self.instr_fsm.act(
             "FETCH_OPERANDS",
@@ -403,15 +416,27 @@ class TRV(CPU):
         )
         self.instr_fsm.act(
             "LOAD",
-            instr_mem_rdport.adr.eq(loadstore_addr[2:]),
-            rd_wrport.adr.eq(rdId),
-            rd_wrport.dat_w.eq(LOAD_data),
-            rd_wrport.we.eq(rdId > 0),
-            NextState("FETCH_INSTR"),
+            NextValue(idbus.adr, loadstore_addr),
+            NextValue(idbus.we, 0),
+            NextState("WAIT_LOAD"),
+        )
+        self.instr_fsm.act(
+            "WAIT_LOAD",
+            idbus.stb.eq(1),
+            idbus.cyc.eq(1),
+            If(
+                idbus.ack,
+                NextValue(mem_dat_r, idbus.dat_r),
+                rd_wrport.adr.eq(rdId),
+                rd_wrport.dat_w.eq(LOAD_data),
+                rd_wrport.we.eq(rdId > 0),
+                NextState("FETCH_INSTR"),
+            ),
         )
         self.instr_fsm.act(
             "STORE",
-            instr_mem_wrport.adr.eq(loadstore_addr[2:]),
+            NextValue(idbus.adr, loadstore_addr),
+            NextValue(idbus.dat_w, mem_dat_w),
             # STORE_wmask =
             # mem_byteAccess      ?
             #         (loadstore_addr[1] ?
@@ -421,7 +446,8 @@ class TRV(CPU):
             # mem_halfwordAccess ?
             #         (loadstore_addr[1] ? 4'b1100 : 4'b0011) :
             #     4'b1111;
-            instr_mem_wrport.we.eq(
+            NextValue(
+                idbus.sel,
                 Mux(
                     mem_byteAccess,
                     Mux(
@@ -436,7 +462,17 @@ class TRV(CPU):
                     ),
                 ),
             ),
-            NextState("FETCH_INSTR"),
+            NextValue(idbus.we, 1),
+            NextState("WAIT_STORE"),
+        )
+        self.instr_fsm.act(
+            "WAIT_STORE",
+            idbus.stb.eq(1),
+            idbus.cyc.eq(1),
+            If(
+                idbus.ack,
+                NextState("FETCH_INSTR"),
+            ),
         )
         self.instr_fsm.act(
             "SYSTEM",
@@ -451,83 +487,83 @@ class TRV(CPU):
                 Display(""),
                 Display("FETCH PC=%d LED=%b", pc, led),
             ),
-            # If(
-            #     self.instr_fsm.ongoing("FETCH_OPERANDS"),
-            #     Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
-            # ),
-            # If(
-            #     self.instr_fsm.ongoing("EXECUTE"),
-            #     #       "0000000_11111_00011_001_00011_0010011"
-            #     Display("         rs2   rs1       rd          "),
-            #     Display(
-            #         "%b_%b_%b_%b_%b_%b",
-            #         funct7,
-            #         rs2Id,
-            #         rs1Id,
-            #         funct3,
-            #         rdId,
-            #         instr_type,
-            #     ),
-            #     If(
-            #         isALUreg,
-            #         Display(
-            #             "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
-            #             rdId,
-            #             rs1Id,
-            #             rs2Id,
-            #             funct3,
-            #         ),
-            #     ),
-            #     If(
-            #         isALUimm,
-            #         Display(
-            #             "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
-            #             rdId,
-            #             rs1Id,
-            #             Iimm,
-            #             funct3,
-            #         ),
-            #     ),
-            #     If(isBranch, Display("BRANCH")),
-            #     If(isJAL, Display("JAL")),
-            #     If(isJALR, Display("JALR")),
-            #     If(isAUIPC, Display("AUIPC")),
-            #     If(isLUI, Display("LUI")),
-            #     If(isLoad, Display("LOAD")),
-            #     If(isStore, Display("STORE")),
-            #     If(isSYSTEM, Display("SYSTEM")),
-            #     If(
-            #         (
-            #             ~isALUreg
-            #             & ~isALUimm
-            #             & ~isBranch
-            #             & ~isJAL
-            #             & ~isJALR
-            #             & ~isAUIPC
-            #             & ~isLUI
-            #             & ~isLoad
-            #             & ~isStore
-            #             & ~isSYSTEM
-            #         ),
-            #         Display("UNKNOWN %b", instr),
-            #     ),
-            #     Display(
-            #         "EXECUTE (%b | %b | %b | %b) & (%d > 0)",
-            #         isALUreg,
-            #         isALUimm,
-            #         isJAL,
-            #         isJALR,
-            #         rdId,
-            #     ),
-            #     If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
-            # ),
+            If(
+                self.instr_fsm.ongoing("FETCH_OPERANDS"),
+                Display("FETCH rs1=%d rs2=%d", rs1Id, rs2Id),
+            ),
+            If(
+                self.instr_fsm.ongoing("EXECUTE"),
+                #       "0000000_11111_00011_001_00011_0010011"
+                Display("         rs2   rs1       rd          "),
+                Display(
+                    "%b_%b_%b_%b_%b_%b",
+                    funct7,
+                    rs2Id,
+                    rs1Id,
+                    funct3,
+                    rdId,
+                    instr_type,
+                ),
+                If(
+                    isALUreg,
+                    Display(
+                        "ALUreg rd=%d rs1=%d rs2=%d funct3=%b",
+                        rdId,
+                        rs1Id,
+                        rs2Id,
+                        funct3,
+                    ),
+                ),
+                If(
+                    isALUimm,
+                    Display(
+                        "ALUimm rd=%d rs1=%d imm=%0d funct3=%b",
+                        rdId,
+                        rs1Id,
+                        Iimm,
+                        funct3,
+                    ),
+                ),
+                If(isBranch, Display("BRANCH")),
+                If(isJAL, Display("JAL")),
+                If(isJALR, Display("JALR")),
+                If(isAUIPC, Display("AUIPC")),
+                If(isLUI, Display("LUI")),
+                If(isLoad, Display("LOAD")),
+                If(isStore, Display("STORE")),
+                If(isSYSTEM, Display("SYSTEM")),
+                If(
+                    (
+                        ~isALUreg
+                        & ~isALUimm
+                        & ~isBranch
+                        & ~isJAL
+                        & ~isJALR
+                        & ~isAUIPC
+                        & ~isLUI
+                        & ~isLoad
+                        & ~isStore
+                        & ~isSYSTEM
+                    ),
+                    Display("UNKNOWN %b", instr),
+                ),
+                Display(
+                    "EXECUTE (%b | %b | %b | %b) & (%d > 0)",
+                    isALUreg,
+                    isALUimm,
+                    isJAL,
+                    isJALR,
+                    rdId,
+                ),
+                If(rd_wrport.we, Display("rd=%d <- %d", rdId, rd_wrport.dat_w)),
+            ),
             If(
                 self.instr_fsm.ongoing("LOAD"),
                 Display("LOAD %d", loadstore_addr),
             ),
             If(
                 self.instr_fsm.ongoing("STORE"),
-                Display("STORE %d <- %x", loadstore_addr, instr_mem_wrport.dat_w),
+                Display("STORE %d <- %x", loadstore_addr, mem_dat_w),
             ),
         ]
 
@@ -544,6 +580,7 @@ class TRV(CPU):
             led.eq(led_rdport.dat_r),
         ]
 
+        '''
         self.fsm = fsm = FSM(reset_state="WAIT")
         fsm.act(
             "WAIT",
@@ -575,6 +612,7 @@ class TRV(CPU):
         self.sync += If(latch, mbus_rdata.eq(idbus.dat_r))
         # self.comb += mbus.rdata.eq(mbus_rdata)             # Latched value.
         # self.comb += If(latch, mbus.rdata.eq(idbus.dat_r)) # Immediate value.
+        '''
 
     def set_reset_address(self, reset_address):
         self.reset_address = reset_address
