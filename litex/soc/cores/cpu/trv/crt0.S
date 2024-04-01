@@ -1,3 +1,6 @@
+#define CSR_BASE 0x82000000
+#define CSR_LEDS_OUT_ADDR (CSR_BASE + 0x1000)
+
 #define MIE_MEIE 	0x800
 
 	.global _start
@@ -6,10 +9,12 @@ _start:
 begin:
 	LI  s0, 0
 	LI  s1, 16
+	LI  gp, CSR_LEDS_OUT_ADDR
 
 label0:
 	LB   a0, 400(s0)
-	# CALL wait
+	SW   a0, 0(gp)
+	CALL wait
 	ADDI s0, s0, 1
 	BNE  s0, s1, label0
 	EBREAK

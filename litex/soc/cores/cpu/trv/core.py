@@ -559,11 +559,11 @@ class TRV(CPU):
             ),
             If(
                 self.instr_fsm.ongoing("LOAD"),
-                Display("LOAD %d", loadstore_addr),
+                Display("LOAD %x", loadstore_addr),
             ),
             If(
                 self.instr_fsm.ongoing("STORE"),
-                Display("STORE %d <- %x", loadstore_addr, mem_dat_w),
+                Display("STORE %x <- %x", loadstore_addr, mem_dat_w),
             ),
         ]
 
