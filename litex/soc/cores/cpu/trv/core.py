@@ -76,18 +76,28 @@ class TRV(CPU):
         # self.comb += led.eq(counter[22])
         # self.sync += counter.eq(counter + 1)
 
-        mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
-        self.specials += mem
+        # mem = Memory(1, 16, init=[0, 0, 0, 1, 1, 1, 0, 0, 0, 1, 1, 1, 0, 1, 0, 1])
+        # self.specials += mem
 
         a = RiscvAssembler()
         a.read(
             """begin:
-            ADD  x1, x0, x0
-            ADDI x2, x0, 32
+            ADD x10, x0, x0
+
             l0:
-            ADDI x1, x1,  1
-            BNE  x1, x2, l0
+            ADDI x10, x10, 1
+            JAL x1, wait
+            JAL zero, l0
             EBREAK
+
+            wait:
+            ADDI x11, x0, 1
+            SLLI x11, x11, 20
+
+            l1:
+            ADDI x11, x11, -1
+            BNE x11, x0, l1
+            JALR x0, x1, 0
             """
         )
         a.assemble()
@@ -102,8 +112,8 @@ class TRV(CPU):
         #     wrport.we.eq(1)
         # ]
 
-        mem_rdport = mem.get_port(async_read=True)
-        self.specials += mem_rdport
+        # mem_rdport = mem.get_port(async_read=True)
+        # self.specials += mem_rdport
         # self.comb += [
         #     mem_rdport.adr.eq(consume),
         #     dout.eq(mem_rdport.dat_r)
@@ -294,8 +304,11 @@ class TRV(CPU):
         self.instr_fsm.act(
             "EXECUTE",
             rd_wrport.adr.eq(rdId),
-            rd_wrport.dat_w.eq(Mux(isJAL | isJALR, pc + 4, aluOut)),
-            rd_wrport.we.eq((isALUreg | isALUimm | isJAL | isJALR) & (rdId > 0)),
+            If(isJAL | isJALR, rd_wrport.dat_w.eq(pc + 4))
+            .Elif(isLUI, rd_wrport.dat_w.eq(Uimm))
+            .Elif(isAUIPC, rd_wrport.dat_w.eq(pc + Uimm))
+            .Else(rd_wrport.dat_w.eq(aluOut)),
+            rd_wrport.we.eq((isALUreg | isALUimm | isJAL | isJALR | isLUI | isAUIPC) & (rdId > 0)),
             If(isJAL, NextValue(pc, pc + Jimm))
             .Elif(isJALR, NextValue(pc, rs1 + Iimm))
             .Elif(isBranch & take_branch, NextValue(pc, pc + Bimm))
@@ -386,7 +399,14 @@ class TRV(CPU):
         read = 0
 
         led = Signal()
-        self.comb += [mem_rdport.adr.eq(pc[20:24]), led.eq(mem_rdport.dat_r)]
+        # self.comb += [mem_rdport.adr.eq(pc[20:24]), led.eq(mem_rdport.dat_r)]
+
+        led_rdport = register_bank.get_port(async_read=True)
+        self.specials += led_rdport
+        self.comb += [
+            led_rdport.adr.eq(10),
+            led.eq(led_rdport.dat_r),
+        ]
 
         self.fsm = fsm = FSM(reset_state="WAIT")
         fsm.act(
