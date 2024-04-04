@@ -21,7 +21,7 @@ import inspect
 
 from migen import *
 
-from litex.soc.cores import cpu
+from litex.soc.cores import cpu, gpu
 from litex.soc.interconnect import wishbone
 from litex.soc.integration.common import *
 from litex.soc.integration.soc import *
@@ -114,6 +114,10 @@ class SoCCore(LiteXSoC):
 
         # UARTBone.
         with_uartbone            = False,
+
+        # GPU parameters.
+        gpu_type                 = None,
+        gpu_variant              = None,
 
         # Others.
         **kwargs):
@@ -266,6 +270,13 @@ class SoCCore(LiteXSoC):
             if timer_uptime:
                 self.timer0.add_uptime()
 
+        # Add GPU.
+        self.add_gpu(
+            name          = str(gpu_type),
+            variant       = "standard" if gpu_variant is None else gpu_variant,
+            reset_address = None if integrated_rom_size else cpu_reset_address,
+        )
+
     # Methods --------------------------------------------------------------------------------------
 
     def add_csr(self, csr_name, csr_id=None, use_loc_if_exists=False):
@@ -340,6 +351,9 @@ def soc_core_args(parser):
 
     # L2 Cache.
     soc_group.add_argument("--l2-size", default=8192, type=auto_int, help="L2 cache size.")
+
+    # CPU parameters.
+    soc_group.add_argument("--gpu-type",          default=None,               help="Select GPU: {}.".format(", ".join(iter(gpu.GPUS.keys()))))
 
 def soc_core_argdict(args):
     r = dict()

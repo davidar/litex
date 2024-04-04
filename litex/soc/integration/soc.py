@@ -1290,6 +1290,152 @@ class SoC(LiteXModule, SoCCoreCompat):
         if hasattr(self.cpu, "nop"):
             self.add_config("CPU_NOP", self.cpu.nop)
 
+    # Add GPU --------------------------------------------------------------------------------------
+    def add_gpu(self, name="vexriscv", variant="standard", reset_address=None, cfu=None):
+        from litex.soc.cores import gpu
+
+        # Check that GPU is supported.
+        if name not in gpu.GPUS.keys():
+            supported_gpus = []
+            gpu_name_length = max([len(gpu_name) for gpu_name in gpu.GPUS.keys()])
+            for gpu_name in sorted(gpu.GPUS.keys()):
+                gpu_cls  = gpu.GPUS[gpu_name]
+                gpu_desc = f"{gpu_cls.family}\t/ {gpu_cls.category}"
+                supported_gpus += [f"- {gpu_name}{' '*(gpu_name_length - len(gpu_name))} ({gpu_desc})"]
+            self.logger.error("{} GPU {}, supported are: \n{}".format(
+                colorer(name),
+                colorer("not supported", color="red"),
+                colorer("\n".join(supported_gpus))))
+            raise SoCError()
+
+        # Add GPU.
+        gpu_cls = gpu.GPUS[name]
+        if (variant not in gpu_cls.variants) and (gpu_cls is not gpu.GPUNone):
+            self.logger.error("{} GPU variant {}, supported are: \n - {}".format(
+                colorer(variant),
+                colorer("not supported", color="red"),
+                colorer("\n - ".join(sorted(gpu_cls.variants)))))
+            raise SoCError()
+        self.check_if_exists("gpu")
+        if gpu_cls is gpu.GPUNone:
+            self.gpu = gpu_cls(self.bus.data_width, self.bus.address_width)
+        else:
+            self.gpu = gpu_cls(self.platform, variant)
+        self.logger.info("GPU {} {}.".format(
+            colorer(name, color="underline"),
+            colorer("added", color="green")))
+
+        '''
+        # Add optional CFU plugin.
+        if "cfu" in variant and hasattr(self.gpu, "add_cfu"):
+            self.gpu.add_cfu(cfu_filename=cfu)
+
+        # Update SoC with GPU constraints.
+        # IO regions.
+        for n, (origin, size) in enumerate(self.gpu.io_regions.items()):
+            self.logger.info("GPU {} {} IO Region {} at {} (Size: {}).".format(
+                colorer(name, color="underline"),
+                colorer("adding", color="cyan"),
+                colorer(n),
+                colorer(f"0x{origin:08x}"),
+                colorer(f"0x{size:08x}")))
+            self.bus.add_region("io{}".format(n), SoCIORegion(origin=origin, size=size, cached=False))
+        # Mapping.
+        if isinstance(self.gpu, gpu.GPUNone):
+            # With GPUNone, give priority to User's mapping.
+            self.mem_map = {**self.gpu.mem_map, **self.mem_map}
+            # With GPUNone, disable IO regions check.
+            self.bus.io_regions_check = False
+        else:
+            # Override User's mapping with GPU constrainted mapping (and warn User).
+            for n, origin in self.gpu.mem_map.items():
+                if n in self.mem_map.keys() and self.mem_map[n] != self.gpu.mem_map[n]:
+                    self.logger.info("GPU {} {} {} mapping from {} to {}.".format(
+                        colorer(name, color="underline"),
+                        colorer("overriding", color="cyan"),
+                        colorer(n),
+                        colorer(f"0x{self.mem_map[n]:08x}"),
+                        colorer(f"0x{self.gpu.mem_map[n]:08x}")))
+            self.mem_map.update(self.gpu.mem_map)
+        '''
+
+        # Add Bus Masters/CSR/IRQs.
+        if not isinstance(self.gpu, gpu.GPUNone):
+            # Reset Address.
+            if reset_address is None:
+                reset_address = self.mem_map["rom"]
+            self.logger.info("GPU {} {} reset address to {}.".format(
+                colorer(name, color="underline"),
+                colorer("setting", color="cyan"),
+                colorer(f"0x{reset_address:08x}")))
+            self.gpu.set_reset_address(reset_address)
+
+            # Bus Masters.
+            self.logger.info("GPU {} {} Bus Master(s).".format(
+                colorer(name, color="underline"),
+                colorer("adding", color="cyan")))
+            for n, gpu_bus in enumerate(self.gpu.periph_buses):
+                self.bus.add_master(name="gpu_bus{}".format(n), master=gpu_bus)
+
+            # Interrupts.
+            if hasattr(self.gpu, "interrupt"):
+                self.logger.info("GPU {} {} Interrupt(s).".format(
+                    colorer(name, color="underline"),
+                    colorer("adding", color="cyan")))
+                self.irq.enable()
+                if hasattr(self.gpu, "reserved_interrupts"):
+                    self.gpu.interrupts.update(self.gpu.reserved_interrupts)
+                for irq_name, loc in self.gpu.interrupts.items():
+                    self.irq.add(irq_name, loc)
+                self.add_config("GPU_HAS_INTERRUPT")
+
+            # Create optional DMA Bus (for Cache Coherence).
+            if hasattr(self.gpu, "dma_bus"):
+                if isinstance(self.gpu.dma_bus, wishbone.Interface):
+                    dma_bus_standard = "wishbone"
+                elif isinstance(self.gpu.dma_bus, axi.AXILiteInterface):
+                    dma_bus_standard = "axi_lite"
+                elif isinstance(self.gpu.dma_bus, axi.AXIInterface):
+                    dma_bus_standard = "axi"
+                else:
+                    raise NotImplementedError
+                self.logger.info("GPU {} {} DMA Bus.".format(
+                    colorer(name, color="underline"),
+                    colorer("adding", color="cyan"))
+                )
+                self.dma_bus = SoCBusHandler(
+                    name             = "SoCDMABusHandler",
+                    standard         = dma_bus_standard,
+                    data_width       = self.gpu.dma_bus.data_width,
+                    address_width    = self.gpu.dma_bus.address_width,
+                    bursting         = self.gpu.dma_bus.bursting
+                )
+                self.dma_bus.add_slave(name="dma", slave=self.gpu.dma_bus, region=SoCRegion(origin=0x00000000, size=0x100000000)) # FIXME: covers lower 4GB only
+
+            # Connect SoCController's reset to GPU reset.
+            if hasattr(self, "ctrl"):
+                self.comb += self.gpu.reset.eq(
+                    # Reset the GPU on...
+                    getattr(self.ctrl, "soc_rst", 0) | # Full SoC Reset command...
+                    getattr(self.ctrl, "gpu_rst", 0)   # or on GPU Reset command.
+                )
+            self.add_config("GPU_RESET_ADDR", reset_address)
+
+        # Add GPU's SoC components (if any).
+        if hasattr(self.gpu, "add_soc_components"):
+            self.logger.info("GPU {} {} SoC components.".format(
+                colorer(name, color="underline"),
+                colorer("adding", color="cyan")))
+            self.gpu.add_soc_components(soc=self)
+
+        # Add constants.
+        self.add_config(f"GPU_TYPE_{name}")
+        self.add_config(f"GPU_VARIANT_{str(variant.split('+')[0])}")
+        self.add_config("GPU_NAME",       getattr(self.gpu, "name",       "Unknown"))
+        self.add_config("GPU_HUMAN_NAME", getattr(self.gpu, "human_name", "Unknown"))
+        if hasattr(self.gpu, "nop"):
+            self.add_config("GPU_NOP", self.gpu.nop)
+
     # Add Timer ------------------------------------------------------------------------------------
     def add_timer(self, name="timer0"):
         from litex.soc.cores.timer import Timer
