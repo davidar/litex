@@ -34,99 +34,74 @@ GCC_FLAGS = {
 
 # FireV ------------------------------------------------------------------------------------------
 
+
 class Raster(GPU):
-    category             = "softcore"
-    variants             = GPU_VARIANTS
-    data_width           = 32
-    endianness           = "little"
-    nop                  = "nop"
-    io_regions           = {0x8000_0000: 0x8000_0000} # Origin, Length.
+    category = "softcore"
+    variants = GPU_VARIANTS
+    data_width = 32
+    endianness = "little"
+    nop = "nop"
+    io_regions = {0x8000_0000: 0x8000_0000}  # Origin, Length.
 
     # GCC Flags.
     @property
     def gcc_flags(self):
-        flags =  GCC_FLAGS[self.variant]
+        flags = GCC_FLAGS[self.variant]
         flags += " -D__firev__ "
         return flags
 
     def __init__(self, platform, variant="standard"):
-        self.platform     = platform
-        self.variant      = variant
-        self.human_name   = f"FireV-{variant.upper()}"
-        self.reset        = Signal()
-        self.idbus        = idbus = wishbone.Interface(data_width=32, address_width=32, addressing="byte")
-        self.periph_buses = [idbus] # Peripheral buses (Connected to main SoC's bus).
-        self.memory_buses = []      # Memory buses (Connected directly to LiteDRAM).
+        self.platform = platform
+        self.variant = variant
+        self.human_name = f"FireV-{variant.upper()}"
+        self.reset = Signal()
+        self.idbus = idbus = wishbone.Interface(
+            data_width=32, address_width=32, addressing="byte"
+        )
+        self.periph_buses = [idbus]  # Peripheral buses (Connected to main SoC's bus).
+        self.memory_buses = []  # Memory buses (Connected directly to LiteDRAM).
 
-        # FireV Mem Bus.
-        # ----------------
-        mbus = Record([
-            ("out_sd_addr",    32),
-            ("out_sd_in_valid", 1),
-            ("out_sd_wmask",    4),
-            ("out_sd_rw",       1),
-            ("out_sd_data_in", 32),
-            ("in_sd_done",      1),
-            ("in_sd_data_out", 32),
-        ])
+        valid = Signal()
 
-        # FireV Instance.
-        # -----------------
         self.gpu_params = dict(
             # Clk / Rst.
-            i_clock = ClockSignal("sys"),
-            i_reset = (ResetSignal("sys") | self.reset),
-
-            # Reset Address.
-            # i_in_boot_at = Constant(0, 32),
-
+            i_clock=ClockSignal("sys"),
+            i_reset=(ResetSignal("sys") | self.reset),
             # I/D Bus.
-            o_out_sd_addr     = mbus.out_sd_addr,
-            o_out_sd_in_valid = mbus.out_sd_in_valid,
-            o_out_sd_wmask    = mbus.out_sd_wmask,
-            o_out_sd_data_in  = mbus.out_sd_data_in,
-            o_out_sd_rw       = mbus.out_sd_rw,
-            i_in_sd_done      = mbus.in_sd_done,
-            i_in_sd_data_out  = mbus.in_sd_data_out,
+            o_out_sd_addr=idbus.adr,
+            o_out_sd_in_valid=valid,
+            o_out_sd_wmask=idbus.sel,
+            o_out_sd_data_in=idbus.dat_w,
+            o_out_sd_rw=idbus.we,
+            i_in_sd_done=idbus.ack,
+            i_in_sd_data_out=idbus.dat_r,
         )
 
         # Adapt FireV Mem Bus to Wishbone.
         # --------------------------------
         self.fsm = fsm = FSM(reset_state="WAIT")
-        fsm.act("WAIT",
-            If(mbus.out_sd_in_valid,
-                idbus.stb.eq(1),
-                idbus.cyc.eq(1),
-                NextState("WB-ACCESS")
-            )
+        fsm.act(
+            "WAIT", If(valid, idbus.stb.eq(1), idbus.cyc.eq(1), NextState("WB-ACCESS"))
         )
-        fsm.act("WB-ACCESS",
+        fsm.act(
+            "WB-ACCESS",
             idbus.stb.eq(1),
             idbus.cyc.eq(1),
-            If(idbus.ack,
-                NextState("WAIT")
-            )
+            If(idbus.ack, NextState("WAIT")),
         )
-        self.comb += [
-            idbus.we.eq(mbus.out_sd_rw),
-            idbus.adr.eq(mbus.out_sd_addr),
-            # idbus.sel.eq(mbus.out_sd_wmask),
-            idbus.sel.eq(0b1111),
-            idbus.dat_w.eq(mbus.out_sd_data_in),
-
-
-            mbus.in_sd_data_out.eq(idbus.dat_r),
-            mbus.in_sd_done.eq(idbus.ack),
-        ]
 
         # self.sync += [
-        #     If(mbus.out_sd_in_valid,
-        #         Display("rw=%d, addr=%08x, data=%08x, mask=%x",
-        #                 mbus.out_sd_rw, mbus.out_sd_addr, mbus.out_sd_data_in, mbus.out_sd_wmask)
+        #     If(
+        #         valid,
+        #         Display(
+        #             "rw=%d, addr=%08x, data=%08x, mask=%x",
+        #             idbus.we,
+        #             idbus.adr,
+        #             idbus.dat_w,
+        #             idbus.sel,
+        #         ),
         #     ),
-        #     If(mbus.in_sd_done,
-        #         Display("data=%08x", mbus.in_sd_data_out)
-        #     )
+        #     If(idbus.ack, Display("data=%08x", idbus.dat_r)),
         # ]
 
         # Add Verilog sources.
