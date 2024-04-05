@@ -2550,6 +2550,9 @@ class LiteXSoC(SoC):
         # Connect Video FrameBuffer to Video PHY.
         self.comb += vfb.source.connect(phy if isinstance(phy, stream.Endpoint) else phy.sink)
 
+        if hasattr(self.gpu, "vtg_sink"):
+            self.comb += vtg.source.connect(self.gpu.vtg_sink, omit={"ready"})
+
         # Constants.
         self.add_constant("VIDEO_FRAMEBUFFER_BASE", base)
         self.add_constant("VIDEO_FRAMEBUFFER_HRES", hres)

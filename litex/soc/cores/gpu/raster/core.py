@@ -10,9 +10,10 @@ from migen import *
 
 from litex.gen import *
 
-from litex.soc.interconnect import wishbone
-from litex.soc.cores.gpu import GPU
+from litex.soc.interconnect import wishbone, stream
 from litex.soc.interconnect.csr import CSRStorage
+from litex.soc.cores.gpu import GPU
+from litex.soc.cores.video import video_timing_layout
 
 # Variants -----------------------------------------------------------------------------------------
 
@@ -64,6 +65,8 @@ class Raster(GPU):
 
         self.framebuffer_base = CSRStorage(32)
 
+        self.vtg_sink = stream.Endpoint(video_timing_layout)
+
         valid = Signal()
 
         self.gpu_params = dict(
@@ -72,6 +75,8 @@ class Raster(GPU):
             i_reset=(ResetSignal("sys") | self.reset),
             # Framebuffer.
             i_in_framebuffer_base=self.framebuffer_base.storage,
+            # Video Timing Generator.
+            i_in_vsync=self.vtg_sink.vsync,
             # I/D Bus.
             o_out_sd_addr=idbus.adr,
             o_out_sd_in_valid=valid,
