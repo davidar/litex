@@ -12,6 +12,7 @@ from litex.gen import *
 
 from litex.soc.interconnect import wishbone
 from litex.soc.cores.gpu import GPU
+from litex.soc.interconnect.csr import CSRStorage
 
 # Variants -----------------------------------------------------------------------------------------
 
@@ -61,12 +62,16 @@ class Raster(GPU):
         self.periph_buses = [idbus]  # Peripheral buses (Connected to main SoC's bus).
         self.memory_buses = []  # Memory buses (Connected directly to LiteDRAM).
 
+        self.framebuffer_base = CSRStorage(32)
+
         valid = Signal()
 
         self.gpu_params = dict(
             # Clk / Rst.
             i_clock=ClockSignal("sys"),
             i_reset=(ResetSignal("sys") | self.reset),
+            # Framebuffer.
+            i_in_framebuffer_base=self.framebuffer_base.storage,
             # I/D Bus.
             o_out_sd_addr=idbus.adr,
             o_out_sd_in_valid=valid,

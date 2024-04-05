@@ -212,6 +212,11 @@ __attribute__((__used__)) int main(int i, char **c)
 	video_framebuffer_dma_enable_write(1);
 #endif
 
+	/* Initialise GPU */
+#ifdef CSR_GPU_BASE
+	gpu_framebuffer_base_write(VIDEO_FRAMEBUFFER_BASE);
+#endif
+
 	/* Execute  initialization functions */
 	init_dispatcher();
 
