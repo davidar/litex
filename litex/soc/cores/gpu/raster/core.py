@@ -64,9 +64,11 @@ class Raster(GPU):
         self.memory_buses = []  # Memory buses (Connected directly to LiteDRAM).
 
         self.framebuffer_base = CSRStorage(32)
+        self.framebuffer_base_out = Signal(32)
 
         self.vtg_sink = stream.Endpoint(video_timing_layout)
 
+        fbuffer = Signal()
         valid = Signal()
 
         self.gpu_params = dict(
@@ -75,6 +77,7 @@ class Raster(GPU):
             i_reset=(ResetSignal("sys") | self.reset),
             # Framebuffer.
             i_in_framebuffer_base=self.framebuffer_base.storage,
+            o_out_fbuffer=fbuffer,
             # Video Timing Generator.
             i_in_vsync=self.vtg_sink.vsync,
             # I/D Bus.
@@ -85,6 +88,13 @@ class Raster(GPU):
             o_out_sd_rw=idbus.we,
             i_in_sd_done=idbus.ack,
             i_in_sd_data_out=idbus.dat_r,
+        )
+
+        self.comb += If(
+            self.framebuffer_base.storage != 0,
+            self.framebuffer_base_out.eq(
+                self.framebuffer_base.storage + 640 * 480 * 4 * fbuffer
+            ),
         )
 
         # Adapt FireV Mem Bus to Wishbone.

@@ -2553,6 +2553,9 @@ class LiteXSoC(SoC):
         if hasattr(self.gpu, "vtg_sink"):
             self.comb += vtg.source.connect(self.gpu.vtg_sink, omit={"ready"})
 
+        if hasattr(self.gpu, "framebuffer_base_out"):
+            self.sync += vfb.dma._base.storage.eq(self.gpu.framebuffer_base_out)
+
         # Constants.
         self.add_constant("VIDEO_FRAMEBUFFER_BASE", base)
         self.add_constant("VIDEO_FRAMEBUFFER_HRES", hres)
